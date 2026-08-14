@@ -293,7 +293,12 @@ p{margin:0 0 11px;font-size:clamp(14px,1.15vw,17px);color:#4a453f;max-width:62ch
    밀지 않는다 — 다른 장 종류(표지·판단)가 쓰는 값이라 건드리지 않는다. */
 .s-shots{padding:2vh 7vw 2vh 0;justify-items:start;background:#fff}
 .s-shots header{display:none}
-.s-shots h2{margin-bottom:6px}
+/* ★ 제목만 왼쪽에서 조금 떼어 둔다(2026-08-14 지시: "윗여백 만큼 좌측여백을
+   조그만 둡시다 · 제목의 위치만 옮기면 될 것 같아요"). 본문 상자는 화면 왼쪽
+   끝(0)에 그대로 붙어 있고 — 그래야 오른쪽 아바타 칸 232px 이 지켜진다 —
+   제목만 위 여백과 같은 값(2vh = 1080 기준 21.6px)만큼 들어온다.
+   본문(원고 HTML)은 자기 여백을 이미 갖고 있어서 건드리지 않는다. */
+.s-shots h2{margin-bottom:6px;padding-left:2vh}
 .s-shots h2::after{margin-top:6px}
 .s-shots .cols{grid-template-columns:1fr;gap:0}
 .s-shots .m-shots::before{content:none}

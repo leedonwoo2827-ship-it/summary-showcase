@@ -385,7 +385,15 @@ p{margin:0 0 11px;font-size:clamp(14px,1.15vw,17px);color:#4a453f;max-width:62ch
 /* 원본 `body` 의 좌우 여백(4px)은 남기고 위아래는 뺀다 — 그 여백은 문서의 처음과
    끝에 두라고 준 것인데 조각은 문서 중간이다. 좌우를 빼면 본문 폭이 936→944 로
    벌어져 줄바꿈이 달라지므로 **좌우는 꼭 남긴다.** */
-.m-html>.doc{padding-top:5px;padding-bottom:0}
+/* ★ 왼쪽 여백을 제목과 **같은 값**으로 맞춘다(2026-08-14 지적: "글자로 시작하는
+   경우 잘려 보임"). 원본 `body` 가 주는 좌우 여백은 4px 뿐인데, 배율(1.788)을
+   먹여도 7px 밖에 안 된다 — 불릿(●)으로 시작하는 장은 점이 안쪽에 있어 괜찮지만
+   글자로 시작하는 장은 첫 글자가 화면 모서리에 닿아 잘린 것처럼 보인다.
+   제목이 들어온 만큼(2vh) 들어오면 둘이 나란히 서고 잘려 보이지도 않는다.
+   ★ `padding` 이 아니라 `margin-left` 다 — padding 을 키우면 `width:944px`
+     안쪽이 좁아져 **줄바꿈 위치가 달라진다**(캡처와 픽셀이 겹치던 근거가 깨진다).
+     margin 은 상자를 통째로 옮길 뿐이라 안쪽 배치가 그대로다. */
+.m-html>.doc{padding-top:5px;padding-bottom:0;margin-left:calc(2vh / 1.788)}
 .m-html>.doc>*:first-child{margin-top:0}
 .m-html>.doc>*:last-child{margin-bottom:0}
 

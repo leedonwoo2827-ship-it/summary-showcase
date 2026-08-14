@@ -28,6 +28,7 @@ from pydantic import BaseModel
 from core import (activity, config, htmldoc, manuscript as ms, refs as refs_mod,
                   versions, workspace as ws)
 from core.jobs import get_registry
+from render import ff
 from pipeline.registry import (STAGES, cached_data, read_cache,
                                stage_states, write_cache)
 import pipeline.s0_prd     # noqa: F401
@@ -712,21 +713,35 @@ async def post_recording(pid: int, request: Request, ext: str = "webm") -> Dict[
         e = "webm"
     d = ws.step_dir(pid, slug, "dist", create=True)
     base = f"{ws.ascii_slug(slug)}-녹화"
-    name, i = f"{base}.{e}", 1
+    name, i = f"{base}.mp4", 1
     while (d / name).exists():
         i += 1
-        name = f"{base}-{i}.{e}"
+        name = f"{base}-{i}.mp4"
 
-    path = d / name
+    # 받아 적은 원본은 임시로 둔다 — 아래에서 다시 묶은 뒤 지운다
+    raw = ws.cache_dir(pid, slug) / f"_rec.{e}"
+    raw.parent.mkdir(parents=True, exist_ok=True)
     n = 0
-    with path.open("wb") as f:
+    with raw.open("wb") as f:
         async for chunk in request.stream():
             f.write(chunk)
             n += len(chunk)
     if n == 0:
-        path.unlink(missing_ok=True)
+        raw.unlink(missing_ok=True)
         raise HTTPException(status_code=400, detail="빈 파일입니다")
-    return {"ok": True, "name": name, "path": str(path), "bytes": n}
+
+    path = d / name
+    ok, how = ff.normalize_mp4(raw, path)
+    if not ok:
+        # ffmpeg 이 없거나 실패하면 **받은 것이라도 남긴다.** 18분을 다시 찍게
+        # 만들 수는 없다 — 대신 폰에서 안 열릴 수 있다고 알려 준다.
+        path = d / f"{base}.{e}" if not (d / f"{base}.{e}").exists() else d / f"{base}-{i}.{e}"
+        raw.replace(path)
+        return {"ok": True, "name": path.name, "path": str(path), "bytes": n,
+                "raw": True, "why": how[:200]}
+    raw.unlink(missing_ok=True)
+    return {"ok": True, "name": name, "path": str(path),
+            "bytes": path.stat().st_size, "how": how}
 
 
 @app.get("/api/projects/{pid}/activity")

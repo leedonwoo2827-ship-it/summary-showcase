@@ -43,6 +43,29 @@ if (!slides.length) {
 const browser = await chromium.launch();
 const page = await browser.newPage({ viewport: { width: WIDTH, height: HEIGHT } });
 
+/* ★ 한 장이 여러 컷이 된다 — **줄이 뜨는 순간마다 한 장씩.**
+ *
+ * 정지 화면 한 장으로는 "차례로 나타나는 것" 을 담을 수 없다. 그래서 그 장의
+ * 줄 등장 시각(`.m-html` 의 `data-at`)을 읽어, 그 시각마다 화면을 한 번씩 찍는다.
+ * 이어 붙일 때 각 컷이 다음 컷 시각까지 머물면 실제 재생과 같은 순서가 된다.
+ *
+ * ★ 컷마다 페이지를 다시 읽지 않는다. 한 번 읽고 **그 안에서 상태만 바꿔** 찍는다
+ *   — 90장 × 4컷이면 360번을 다시 읽어야 하는데, 그것만으로 몇 분이 더 든다.
+ */
+async function cutTimes(page, sec) {
+  const ats = await page.evaluate(() => {
+    const box = document.querySelector(".s.on .m-html");
+    if (!box) return null;
+    try { return JSON.parse(box.dataset.at || "[]"); } catch { return []; }
+  });
+  if (!ats || !ats.length) return null;          // 원고 장이 아니면 한 컷
+  // 같은 초에 여러 줄이 뜨면 컷은 하나다. 0초는 반드시 넣는다.
+  const uniq = [...new Set([0, ...ats.map((x) => Math.max(0, +x || 0))])]
+    .sort((a, b) => a - b)
+    .filter((t) => !sec || t < sec - 0.2);       // 장이 끝난 뒤에 뜨는 컷은 버린다
+  return uniq.length > 1 ? uniq : null;
+}
+
 const manifest = [];
 for (const s of slides) {
   const url = `${BASE}/preview/${PID}?n=${s.no}&t=${Date.now()}`;
@@ -77,25 +100,52 @@ for (const s of slides) {
     //   `.querySelector`(첫 번째 하나만)로는 지금 보이는 장 것을 못 잡을
     //   때가 많다(엉뚱하게 1번 장 것만 지워짐). 전부 지운다.
     document.querySelectorAll(".cc-st").forEach((el) => { el.style.display = "none"; });
-    /* ★ 원고 장(html)의 줄은 **전부 뜬 상태로** 찍는다.
-       정지 화면 한 장에는 "차례로 나타나는 것" 을 담을 수 없다. 담으려면 한 장을
-       등장 단계 수만큼 여러 컷으로 쪼개고 음성도 그 오프셋으로 나눠야 하는데,
-       프레임 수가 장당 3~6배로 늘어 렌더 시간이 그만큼 든다. 그건 뒤로 미루고
-       지금은 **다 뜬 마지막 상태**를 찍는다 — 빠뜨리는 내용은 없고, 영상에서만
-       등장 순서가 안 보인다(발표 화면에서는 그대로 산다).
+    /* 일단 다 띄워 둔다 — 줄이 없는 장(그림·텍스트)은 이 상태 그대로 한 장 찍고,
+       원고 장은 아래에서 컷마다 `toggle` 로 그 시각 상태를 다시 만든다.
        `?n=` 모드가 이미 다 띄우지만(render/slides.py `armHtml` 의 `_one` 갈래),
-       그쪽이 바뀌어도 영상이 조용히 반쯤 빈 화면을 굽지 않도록 여기서도 못박는다.
-       ★ 나중에 단계별로 찍으려면 `?n={no}&at={초}` 를 쓰면 된다 — 그 시각의
-         화면을 정지 상태로 그려 주는 길이 이미 열려 있다. */
+       그쪽이 바뀌어도 영상이 조용히 반쯤 빈 화면을 굽지 않도록 여기서도 못박는다. */
     document.querySelectorAll(".m-html .hb").forEach((el) => { el.classList.add("on"); });
   });
   // grid-template-columns 전환에 .55s 걸린다 — 최종 배치가 자리 잡을 시간을 준다.
   await page.waitForTimeout(700);
-  const name = `${String(s.no).padStart(3, "0")}.png`;
-  await page.screenshot({ path: join(OUT, name), type: "png" });
-  manifest.push({ no: s.no, title: s.title, image: name,
-                  audio: (s.audio || {}).file || null, sec: (s.audio || {}).sec || 0 });
-  console.log(`[${s.no}] ${s.title || ""}`);
+
+  const pad = String(s.no).padStart(3, "0");
+  const sec = (s.audio || {}).sec || 0;
+  const times = await cutTimes(page, sec);
+
+  if (!times) {
+    // 원고 장이 아니거나 줄이 하나뿐 — 예전처럼 한 장이면 된다
+    const name = `${pad}.png`;
+    await page.screenshot({ path: join(OUT, name), type: "png" });
+    manifest.push({ no: s.no, title: s.title, image: name,
+                    cuts: [{ image: name, at: 0 }],
+                    audio: (s.audio || {}).file || null, sec });
+    console.log(`[${s.no}] ${s.title || ""}`);
+    continue;
+  }
+
+  const cuts = [];
+  for (let k = 0; k < times.length; k++) {
+    const t = times[k];
+    // 그 시각의 상태로 굳힌다 — `toggle` 이라 앞 컷에서 켠 줄도 정확히 되돌아간다
+    await page.evaluate((t) => {
+      const box = document.querySelector(".s.on .m-html");
+      if (!box) return;
+      let ats = [];
+      try { ats = JSON.parse(box.dataset.at || "[]"); } catch { /* 없으면 전부 끈다 */ }
+      box.querySelectorAll(".hb").forEach((b, i) => {
+        b.classList.toggle("on", (+ats[i] || 0) <= t);
+      });
+    }, t);
+    // 줄이 뜨는 애니메이션(.34s)이 끝나야 흐릿하지 않게 찍힌다
+    await page.waitForTimeout(420);
+    const name = `${pad}-${String(k).padStart(2, "0")}.png`;
+    await page.screenshot({ path: join(OUT, name), type: "png" });
+    cuts.push({ image: name, at: t });
+  }
+  manifest.push({ no: s.no, title: s.title, image: cuts[cuts.length - 1].image,
+                  cuts, audio: (s.audio || {}).file || null, sec });
+  console.log(`[${s.no}] ${s.title || ""}  — 컷 ${cuts.length}`);
 }
 await browser.close();
 

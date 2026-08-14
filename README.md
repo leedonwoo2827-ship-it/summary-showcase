@@ -219,7 +219,7 @@ S9    하나로 렌더링         1 … 37
 
 ```
 … 레포 받아 읽기 — README.md 읽는 중 · 1:07   (3/6)  ▓▓▓▓▓▓░░░░░░
-    02:14:31  레포 2개: leedonwoo…/caind-expert
+    02:14:31  레포 2개: acme…/example-service
     02:14:52  사이트만: https://relay.dothome.co.kr/ — 자료로만 씁니다
     02:15:08  파일 412개 · 커밋 30건
 ```

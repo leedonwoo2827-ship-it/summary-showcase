@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """개발자 프레젠트 지원 에이전트 — 로컬 콘솔 서버.
 
-FastAPI + 무빌드 바닐라 SPA. 사내 표준(qa20batch · aim-local · xam-local ·
+FastAPI + 무빌드 바닐라 SPA. 사내 로컬 콘솔 표준(
 instructional-design-agent)과 같은 형태다.
 
 산출물은 앱 폴더 밖 형제 폴더에 쌓인다 — core/workspace.py 참고.

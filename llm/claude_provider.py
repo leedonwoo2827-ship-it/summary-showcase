@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Claude 프로바이더 — Claude Code 구독 OAuth. **API 키를 쓰지 않는다.**
 
-`oauth-llm-bridge/services/llm_backend.py` 의 duck-typed 계약을 그대로 만족시킨다.
+사내 LLM 브릿지의 duck-typed 계약을 그대로 만족시킨다.
 새 인터페이스를 발명하지 않는다 — 그래야 codex·agy 프로바이더와 갈아끼울 수 있다.
 
     model                                     # 반드시 **대입 가능한 필드**
@@ -66,7 +66,7 @@ def scrubbed_env() -> Dict[str, str]:
 
 
 def _classify_error(msg: str) -> Exception:
-    """문자열 매칭으로 타입화 — oauth-llm-bridge 와 같은 규칙."""
+    """문자열 매칭으로 타입화 — 사내 LLM 브릿지와 같은 규칙."""
     low = (msg or "").lower()
     if any(k in low for k in ("not authenticated", "sign in", "401", "unauthorized", "login")):
         return NotAuthenticated(msg)

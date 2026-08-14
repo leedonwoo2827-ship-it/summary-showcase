@@ -17,7 +17,7 @@
 한 단계를 다시 돌려도 다른 단계 결과가 섞이지 않는다.
 
     showcase-out-260808/
-      01_caind-oda-saas/           ← 프로젝트 (NN_slug)
+      01_example-service/           ← 프로젝트 (NN_slug)
         project.json
         01_프레임/   v1-f03.webp · vision/v1-f03.webp
         02_레포/     repo/ · tree.json · commits.json

@@ -109,7 +109,7 @@ def norm_nwo(raw: str) -> str:
     """`owner/name` · 전체 URL · `git@` 을 모두 `owner/name` 으로.
 
     ★ 브라우저 주소창에서 그대로 복사해 붙이는 일이 잦다. 그러면
-      `.../caind-expert/tree/main/relay` 처럼 **레포 안의 위치**가 딸려 온다.
+      `.../example-service/tree/main/relay` 처럼 **레포 안의 위치**가 딸려 온다.
       예전엔 정규식이 끝에서부터 두 칸을 집어서 `main/relay` 를 레포 이름으로
       읽었고, 있지도 않은 레포를 받으러 갔다. 앞에서부터 두 칸만 쓴다.
     """

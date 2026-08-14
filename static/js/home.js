@@ -42,7 +42,7 @@ function startForm() {
   form.appendChild(field("영상 폴더", "video_dir",
     "D:/00work/260808-jarang/_video-context",
     "폴더 안의 영상 파일이 곧 항목이 됩니다. 원본은 복사하지 않고 읽기만 합니다."));
-  form.appendChild(field("라이브 URL", "live_url", "https://caind-expert.cloud",
+  form.appendChild(field("라이브 URL", "live_url", "https://example.com",
     "선택 — 쇼케이스에서 '실제로 보러 가기' 링크가 됩니다."));
   form.appendChild(field("GitHub 레포", "repo", "owner/name",
     "선택 — 넣으면 기능↔코드 연결과 기술적 의사결정 서술이 가능해집니다."));

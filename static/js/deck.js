@@ -93,29 +93,36 @@ export const meta = {
     const [bBtn, bLab] = mkRun(DECK.bake, "음성/자막 굽기", "음성 합성 · 자막 · 조립 · 파일 빌드");
     bBtn.classList.add("primary");
 
-    /* ★ S9(완성본)는 일부러 mp4 를 안 굽는다 — "재생하며 화면녹화" 가 원래 설계다.
-     * 이 버튼은 그 대신 장마다 화면을 캡처하고 내레이션 길이만큼 이어 붙여
-     * **결정론적으로** mp4 를 만든다(S12). 실시간 녹화가 아니라 화면-소리가
-     * 어긋날 일이 없다. 음성을 아직 안 구웠어도 무음으로라도 나온다. */
-    const [vBtn, vLab] = mkRun(DECK.video, "영상 렌더", "장마다 화면 캡처 + 내레이션 길이로 이어 붙여 mp4 하나로");
+    /* ★ 7번(영상)은 **여기 두지 않는다**(2026-08-14 지시). 영상 만들기는 화면이
+     * 따로 있다(`/record`) — 거기서 통째로 재생하며 녹화하는 것이 이 덱처럼
+     * 시간이 흐르는 화면에는 맞다(줄이 차례로 뜨는 것이 그대로 담긴다). 결정론적
+     * mp4(S12)도 그 화면에 같이 있다.
+     * 여기 버튼을 남겨 두면 같은 일을 하는 자리가 둘이 되고, 무엇보다 **6번이
+     * 끝나기 전에 눌러도 눌리는** 자리가 된다. 대신 6번이 끝났을 때 "이제 저기로
+     * 가면 된다" 는 안내만 띄운다. */
+    const next = el("button", "bakenext");
+    next.type = "button";
+    next.hidden = true;
+    next.append(el("span", null, "완성본이 준비됐습니다 — 영상 렌더링으로"),
+                icon("chevronRight", 13));
+    next.onclick = () => navigate("/record");
 
     /* ★ 굽는 단계는 **한 번에 하나만.** 한 잡이 도는 동안 다른 버튼이 멀쩡히
      * 눌리면 같은 산출물에 잡 둘이 동시에 손을 대 꼬인다 — 실제로 겪은 사고다
      * (2026-08-13). 눌린 버튼만 시계를 보여 주고, 나머지 셋(배경음악 포함)은
      * 도는 동안 통째로 잠근다 — `disabled` 라 커서도 자동으로 손모양이 빠진다. */
-    sBtn.onclick = () => runChain(SCRIPT, sBtn, sLab, [bgm, bBtn, vBtn], "발음대본 생성", "대본이 나왔습니다");
-    bBtn.onclick = () => runChain(BAKE, bBtn, bLab, [bgm, sBtn, vBtn], "음성/자막 굽기", "완성본이 나왔습니다");
-    vBtn.onclick = () => runChain(VIDEO, vBtn, vLab, [bgm, sBtn, bBtn], "영상 렌더", "영상이 나왔습니다");
+    sBtn.onclick = () => runChain(SCRIPT, sBtn, sLab, [bgm, bBtn], "발음대본 생성", "대본이 나왔습니다");
+    bBtn.onclick = () => runChain(BAKE, bBtn, bLab, [bgm, sBtn], "음성/자막 굽기", "완성본이 나왔습니다");
 
     /* ★ **낡았는지를 버튼이 말해야 한다.** 슬라이드를 고쳐 놓고 안 구운 채로
      * 발표하러 가는 것이 이 앱에서 제일 비싼 실수다. */
     const chip = el("span", "bakechip");
     chip.hidden = true;
-    const mark = () => markBake(chip, sBtn, sLab, bBtn, bLab);
+    const mark = () => markBake(chip, sBtn, sLab, bBtn, bLab, next);
     mark();
     window.addEventListener("focus", mark);
 
-    return [view, print, bgm, sBtn, chip, bBtn, vBtn];
+    return [view, print, bgm, sBtn, chip, bBtn, next];
   },
 };
 
@@ -194,7 +201,8 @@ function bgmButton() {
 /* 순서가 곧 규칙이다 — ① 대본을 만들고 ② 그 대본으로 굽는다. */
 const SCRIPT = ["s6-script"];
 const BAKE = ["s10-tts", "s11-audio", "s8-assemble", "s9-render"];
-const VIDEO = ["s12-video"];
+/* 7번(영상)은 이 화면에 없다 — `/record` 가 맡는다. 거기서 통째로 재생하며
+   녹화하는 길과, 장마다 정지 화면으로 잇는 길(S12)을 나란히 고를 수 있다. */
 const BAKE_KO = {
   "s6-script": "발음대본", "s10-tts": "음성 합성", "s11-audio": "자막",
   "s8-assemble": "조립", "s9-render": "파일 빌드", "s12-video": "영상 렌더",
@@ -210,35 +218,43 @@ function mkRun(n, name, tip) {
   return [b, l];
 }
 
-/* 낡았는지를 **버튼 이름이** 말한다. 칩은 무엇 때문에 낡았는지를 말한다. */
-async function markBake(chip, sBtn, sLab, bBtn, bLab) {
+/* 낡았는지를 **버튼 이름이** 말한다. 칩은 무엇 때문에 낡았는지를 말한다.
+ *
+ * ★ 오른쪽 서랍(최근 한 일)과 **같은 곳을 읽는다**(`/activity`). 예전에는 여기가
+ *   스테이지 입력 해시(`/stages`)를 보고, 서랍은 시각을 봤다 — 그래서 한 화면
+ *   안에서 칩은 "낡았습니다", 서랍은 "다시 할 것 0건" 이라고 서로 다른 말을 했다
+ *   (2026-08-14 실측). 무엇을 믿어야 할지 알 수 없으면 둘 다 안 믿게 된다.
+ *   판정은 한 곳에서만 한다 — 「덱보다 앞선 것이 지금 완성작보다 나중에 고쳐졌나」.
+ */
+async function markBake(chip, sBtn, sLab, bBtn, bLab, next) {
   if (!state.projectId) return;
-  let ss = [];
-  try { ss = (await api(`/api/projects/${state.projectId}/stages`)).stages || []; }
+  let a = null;
+  try { a = await api(`/api/projects/${state.projectId}/activity`); }
   catch { return; }
-  const by = Object.fromEntries(ss.map((s) => [s.key, s]));
-  const pick = (keys) => keys.map((k) => by[k]).filter(Boolean);
 
-  const put = (btn, lab, name, group) => {
+  const ran = new Set((a.done || []).map((r) => r.n).filter(Boolean));
+  const old = new Map((a.todo || []).map((t) => [t.n, t]));
+
+  const put = (btn, lab, name, n) => {
     btn.classList.remove("warn");
-    if (!group.length) return "";
-    if (group.some((s) => s.state === "missing")) {
-      lab.textContent = `(전체) ${name}`;
-      return "안 함";
-    }
+    if (!ran.has(n)) { lab.textContent = `(전체) ${name}`; return "안 함"; }
     // 이미 한 번 돌았으면 "다시" 다. 낡았으면 버튼이 주황으로 재촉한다.
-    const old = group.filter((s) => s.state === "stale");
     lab.textContent = `(전체) ${name} 다시`;
-    if (old.length) btn.classList.add("warn");
-    return old.length ? old.map((s) => s.label).join(" · ") : "";
+    const t = old.get(n);
+    if (t) btn.classList.add("warn");
+    return t ? `${n}. ${t.label}${t.why ? ` (${t.why} 뒤)` : ""}` : "";
   };
 
-  const a = put(sBtn, sLab, "발음대본 생성", pick(SCRIPT));
-  const b = put(bBtn, bLab, "음성/자막 굽기", pick(BAKE));
+  const s5 = put(sBtn, sLab, "발음대본 생성", DECK.script);
+  const s6 = put(bBtn, bLab, "음성/자막 굽기", DECK.bake);
+
+  /* 6번이 **다 끝났을 때만** 다음 자리를 안내한다. 끝나기 전에 보이면 "지금
+     눌러도 되나" 를 생각하게 되고, 눌러 보면 아직 아무것도 없다. */
+  if (next) next.hidden = !(ran.has(DECK.bake) && !old.has(DECK.bake));
 
   chip.hidden = false;
-  const stale = [a, b].filter((x) => x && x !== "안 함");
-  if (a === "안 함" || b === "안 함") {
+  const stale = [s5, s6].filter((x) => x && x !== "안 함");
+  if (s5 === "안 함" || s6 === "안 함") {
     chip.className = "bakechip";
     chip.textContent = "아직 안 구웠습니다";
   } else if (stale.length) {
@@ -257,7 +273,7 @@ async function runChain(keys, btn, label, group, name, doneMsg) {
       toast(doneMsg);
       // ★ 다 구웠으면 **그 폴더를 열어 준다.** 경로가 길어서 글로 알려 주면
       //   사람이 복사해 붙여넣어야 한다. 로컬 앱이라 할 수 있는 일이다.
-      if (keys === BAKE || keys === VIDEO) await openDist(true);
+      if (keys === BAKE) await openDist(true);
       location.reload();      // 자막·음성이 붙은 상태로 다시 그린다
     },
   });

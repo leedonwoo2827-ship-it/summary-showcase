@@ -314,7 +314,13 @@ p{margin:0 0 11px;font-size:clamp(14px,1.15vw,17px);color:#4a453f;max-width:62ch
    달라져서 볼 때마다 다르게 보였다. 영상은 항상 1920px 로 찍히니
    (render_frames.mjs), 그 기준 66%인 1267px 로 못박는다 — 미리보기
    창 크기와 무관하게 항상 이 값이다. */
-.s-shots .m-shots{background:#fff;width:1536px;max-width:none}
+/* ★ 창이 1536px 보다 좁으면 상자가 창을 **넘쳐서** 글이 오른쪽 끝까지 가 버린다
+   (2026-08-14 지적: "텍스트가 끝까지 가는 게 약간의 흠"). 화면 배율이 125% 인
+   PC 나 창을 줄인 경우가 그렇다. 좌우 패딩(0.5vw + 7vw)을 뺀 만큼을 상한으로
+   둔다 — 1920 화면에서는 min() 이 1536 을 고르므로 지금과 **완전히 같다.**
+   `max-width` 로는 안 된다: 그리드 칸이 .wrap(1180px)까지만 늘려서, 그보다 큰
+   max-width 는 아무 효과가 없다(그래서 원래도 width 를 직접 준다). */
+.s-shots .m-shots{background:#fff;width:min(1536px,92vw);max-width:none}
 /* ★ `:first-child` 도 붙여 아래 `.m-shots img:first-child{position:absolute}`
    (여러 장 캡션 전환용 — 이 종류엔 항상 이미지가 한 장뿐이라 그게 곧
    first-child 다)와 명시성을 맞춘다. 같은 명시성이면 소스 순서상 저 규칙이

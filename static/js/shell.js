@@ -43,6 +43,7 @@ const routes = [
   { re: /^\/image$/,  nav: "img", layer: "base", load: () => import("./image.js") },
   { re: /^\/video$/,  nav: "vid", layer: "base", load: () => import("./video.js") },
   { re: /^\/deck$/,   nav: "dck", layer: "base", load: () => import("./deck.js") },
+  { re: /^\/record$/, nav: "rec", layer: "base", load: () => import("./record.js") },
 
   // 부유 패널(위층) — 고르는 곳.
   // railed:false = 패널 안쪽 세로 서브레일을 쓰지 않는다. 안 쓰는데 켜 두면
@@ -57,7 +58,7 @@ const routes = [
 
 const HOME = routes[0];
 // 프로젝트가 골라져야 열리는 화면 — 레일에서 잠근다.
-const NEEDS_PROJECT = new Set(["brd", "otl", "txt", "htm", "img", "vid", "dck"]);
+const NEEDS_PROJECT = new Set(["brd", "otl", "txt", "htm", "img", "vid", "dck", "rec"]);
 
 function parseHash() {
   let raw = (location.hash || "#/board").slice(1) || "/board";

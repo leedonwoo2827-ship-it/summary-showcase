@@ -579,6 +579,20 @@ export async function mount(root, ctx) {
 
       tbl.appendChild(row);
     }
+
+    /* ★ 목록 **끝**에 다음 자리로 가는 문을 둔다(2026-08-14 지시).
+     * 여기까지 훑고 나면 남은 일은 하나뿐이다 — 통째로 재생해서 영상으로 만드는
+     * 것. 그런데 그 자리가 화면 맨 위 버튼 줄에만 있어서, 90줄을 다 내려온 사람은
+     * 다시 위로 올라가야 했다. 끝난 자리에서 바로 이어지는 게 맞다. */
+    const tail = el("div", "deck-tail");
+    tail.appendChild(el("span", "deck-tail-t", `${slides.length}장 · 여기까지입니다`));
+    const go = el("button", "btn primary");
+    go.type = "button";
+    go.append(stepBadge(DECK.record, "슬라이드를 통째로 재생해 영상으로"),
+              icon("film", 14), el("span", null, "영상 렌더링"));
+    go.onclick = () => navigate("/record");
+    tail.appendChild(go);
+    tbl.appendChild(tail);
     return tbl;
   }
 

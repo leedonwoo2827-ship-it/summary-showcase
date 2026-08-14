@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Optional
 
 from datetime import datetime
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -690,6 +690,43 @@ def post_refs(pid: int, body: RefsIn) -> Dict[str, Any]:
     doc["refs"] = {"dir": got["dir"], "items": cur}
     ws.save_project(pid, doc["slug"], doc)
     return doc["refs"]
+
+
+@app.post("/api/projects/{pid}/recording")
+async def post_recording(pid: int, request: Request, ext: str = "webm") -> Dict[str, Any]:
+    """화면 녹화본을 **완성본 폴더**에 앉힌다(`/record` 화면이 부른다).
+
+    ★ 산출물은 한 자리에 모인다. 브라우저 기본 내려받기 폴더에 떨어뜨리면 나중에
+      "그 영상 어디 갔지" 가 되고, 이 앱은 폴더째 옮겨도 따라오게 만들어 왔다.
+
+    ★ 통째로 메모리에 올리지 않는다. 18분짜리가 수백 MB 라 `await request.body()`
+      로 받으면 그만큼 램에 얹힌다 — 흘려 가며 쓴다.
+
+    ★ 덮어쓰지 않는다. 다시 녹화한 것이 앞의 것을 지우면 되돌릴 길이 없다 —
+      같은 이름이 있으면 뒤에 번호를 붙인다.
+    """
+    doc = _find(pid)
+    slug = doc["slug"]
+    e = "".join(c for c in (ext or "webm").lower() if c.isalnum())
+    if e not in ("webm", "mp4", "mkv"):
+        e = "webm"
+    d = ws.step_dir(pid, slug, "dist", create=True)
+    base = f"{ws.ascii_slug(slug)}-녹화"
+    name, i = f"{base}.{e}", 1
+    while (d / name).exists():
+        i += 1
+        name = f"{base}-{i}.{e}"
+
+    path = d / name
+    n = 0
+    with path.open("wb") as f:
+        async for chunk in request.stream():
+            f.write(chunk)
+            n += len(chunk)
+    if n == 0:
+        path.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail="빈 파일입니다")
+    return {"ok": True, "name": name, "path": str(path), "bytes": n}
 
 
 @app.get("/api/projects/{pid}/activity")

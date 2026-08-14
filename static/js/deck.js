@@ -48,12 +48,12 @@ export const meta = {
      * 예전엔 "슬라이드 보기" 와 "전체 자동 재생" 두 개였다. 하는 일은 같고
      * ?auto=1 이 붙느냐만 달라서, 화면에서는 같은 버튼 두 개로 보였다.
      * 자동은 슬라이드 페이지 안의 단추로 켠다 — 거기서 켜는 게 맞다.
-     * 보다가 "이제 녹화하자" 가 되지, 열기 전에 정해지는 게 아니다. */
+     * 보다가 "이제 자동으로 넘겨 보자" 가 되지, 열기 전에 정해지는 게 아니다. */
     const view = el("a", "btn");
     view.href = "/preview/" + (state.projectId || 0);
     view.target = "_blank";
     view.rel = "noopener";
-    view.title = "새 탭에서 엽니다 — 왼쪽 아래 단추로 자동 재생을 켜면 녹화용이 됩니다";
+    view.title = "새 탭에서 엽니다 — 왼쪽 아래 단추로 자동 재생을 켤 수 있습니다";
     view.append(icon("slide", 14), el("span", null, "슬라이드 보기"));
 
     /* ★ SME(전문가)에게 보낼 자료 — 장마다 [화면 | 읽는 말]을 표로 훑는
@@ -94,9 +94,7 @@ export const meta = {
     bBtn.classList.add("primary");
 
     /* ★ 7번(영상)은 **여기 두지 않는다**(2026-08-14 지시). 영상 만들기는 화면이
-     * 따로 있다(`/record`) — 거기서 통째로 재생하며 녹화하는 것이 이 덱처럼
-     * 시간이 흐르는 화면에는 맞다(줄이 차례로 뜨는 것이 그대로 담긴다). 결정론적
-     * mp4(S12)도 그 화면에 같이 있다.
+     * 따로 있다(`/mp4`) — 거기서 장마다 찍어 mp4 로 굽는다(S12).
      * 여기 버튼을 남겨 두면 같은 일을 하는 자리가 둘이 되고, 무엇보다 **6번이
      * 끝나기 전에 눌러도 눌리는** 자리가 된다. 대신 6번이 끝났을 때 "이제 저기로
      * 가면 된다" 는 안내만 띄운다. */
@@ -105,7 +103,7 @@ export const meta = {
     next.hidden = true;
     next.append(el("span", null, "완성본이 준비됐습니다 — 영상 렌더링으로"),
                 icon("chevronRight", 13));
-    next.onclick = () => navigate("/record");
+    next.onclick = () => navigate("/mp4");
 
     /* ★ 굽는 단계는 **한 번에 하나만.** 한 잡이 도는 동안 다른 버튼이 멀쩡히
      * 눌리면 같은 산출물에 잡 둘이 동시에 손을 대 꼬인다 — 실제로 겪은 사고다
@@ -201,8 +199,7 @@ function bgmButton() {
 /* 순서가 곧 규칙이다 — ① 대본을 만들고 ② 그 대본으로 굽는다. */
 const SCRIPT = ["s6-script"];
 const BAKE = ["s10-tts", "s11-audio", "s8-assemble", "s9-render"];
-/* 7번(영상)은 이 화면에 없다 — `/record` 가 맡는다. 거기서 통째로 재생하며
-   녹화하는 길과, 장마다 정지 화면으로 잇는 길(S12)을 나란히 고를 수 있다. */
+/* 7번(영상)은 이 화면에 없다 — `/mp4` 가 맡는다(S12). */
 const BAKE_KO = {
   "s6-script": "발음대본", "s10-tts": "음성 합성", "s11-audio": "자막",
   "s8-assemble": "조립", "s9-render": "파일 빌드", "s12-video": "영상 렌더",
@@ -597,16 +594,15 @@ export async function mount(root, ctx) {
     }
 
     /* ★ 목록 **끝**에 다음 자리로 가는 문을 둔다(2026-08-14 지시).
-     * 여기까지 훑고 나면 남은 일은 하나뿐이다 — 통째로 재생해서 영상으로 만드는
-     * 것. 그런데 그 자리가 화면 맨 위 버튼 줄에만 있어서, 90줄을 다 내려온 사람은
+     * 여기까지 훑고 나면 남은 일은 하나뿐이다 — mp4 한 편으로 굽는 것. 그런데 그 자리가 화면 맨 위 버튼 줄에만 있어서, 90줄을 다 내려온 사람은
      * 다시 위로 올라가야 했다. 끝난 자리에서 바로 이어지는 게 맞다. */
     const tail = el("div", "deck-tail");
     tail.appendChild(el("span", "deck-tail-t", `${slides.length}장 · 여기까지입니다`));
     const go = el("button", "btn primary");
     go.type = "button";
-    go.append(stepBadge(DECK.record, "슬라이드를 통째로 재생해 영상으로"),
+    go.append(stepBadge(DECK.video, "장마다 찍어 mp4 한 편으로"),
               icon("film", 14), el("span", null, "영상 렌더링"));
-    go.onclick = () => navigate("/record");
+    go.onclick = () => navigate("/mp4");
     tail.appendChild(go);
     tbl.appendChild(tail);
     return tbl;

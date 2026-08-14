@@ -14,7 +14,7 @@ import { navigate } from "./shell.js";
 
 export const meta = {
   title: "일반영상 제작 에이전트",
-  subtitle: "화면녹화 · 레포 · 라이브 URL 을 넣으면 슬라이드처럼 넘어가는 쇼케이스 한 장이 나옵니다",
+  subtitle: "화면 영상 · 레포 · 라이브 URL 을 넣으면 슬라이드처럼 넘어가는 쇼케이스 한 장이 나옵니다",
 };
 
 function card(title, body) {

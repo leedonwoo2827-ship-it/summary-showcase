@@ -414,7 +414,7 @@ p{margin:0 0 11px;font-size:clamp(14px,1.15vw,17px);color:#4a453f;max-width:62ch
   background:#efebe4;color:#948e86;font-size:12px;
   box-shadow:inset 0 0 0 1px rgb(40 34 28/.08)}
 
-/* 자막 — 발표 중에는 켜 두고, 녹화할 때는 C 로 끈다 */
+/* 자막 — 발표 중에는 켜 두고, 화면만 보여 줄 때는 C 로 끈다 */
 #cc{position:fixed;left:50%;bottom:52px;transform:translateX(-50%);
   max-width:min(900px,86vw);padding:9px 18px;border-radius:8px;
   background:rgb(31 29 26/.86);color:#fff;font-size:clamp(14px,1.5vw,19px);
@@ -474,14 +474,13 @@ body.one #bgmb{display:none}
 #av{position:fixed;right:0;bottom:0;width:12.1%;aspect-ratio:3/4;z-index:7;
     pointer-events:none}
 body.one #av{display:none}
-/* ★ 녹화 모드 — 우상단 단추를 통째로 감춘다(2026-08-14 지시: "여기의 우상단을
-   가리고 녹화하는 방법을 고안해 보세요"). 화면을 그대로 녹화해 영상을 만드는
-   길이 실제로 제일 잘 나오는데(줄이 차례로 뜨는 것이 그대로 담긴다), 그때
-   재생 단추·안내 글자가 본문 오른쪽 끝과 겹쳐 같이 찍힌다.
-   `?bare=1` 로 시작하거나 재생 중 **H** 로 껐다 켠다 — 녹화를 시작해 놓고
-   손을 뻗어 끌 수 있어야 하므로 글쇠가 필요하다.
-   진행바(#bar)는 남긴다. 화면 맨 아래 3px 이라 본문을 가리지 않고, 어디쯤
-   왔는지가 영상에 있는 편이 낫다. */
+/* ★ 맨몸 모드 — 우상단 단추를 통째로 감춘다(2026-08-14 지시: "여기의 우상단을
+   가리고 ... 방법을 고안해 보세요"). 재생 단추·안내 글자가 본문 오른쪽 끝과
+   겹쳐, 이 화면을 그대로 담을 때 같이 찍힌다.
+   `?bare=1` 로 시작하거나 재생 중 **H** 로 껐다 켠다 — 띄워 놓고 손을 뻗어
+   끌 수 있어야 하므로 글쇠가 필요하다. 영상 렌더링 화면(`/mp4`)의 미리보기가
+   `?bare=1` 로 연다.
+   진행바(#bar)는 남긴다. 화면 맨 아래 3px 이라 본문을 가리지 않는다. */
 body.bare #pz,body.bare #bgmb,body.bare #hud{display:none}
 #hud b{color:#6b6660}
 #hud kbd{font:inherit;color:#b3aca3}
@@ -528,7 +527,7 @@ const _one=_q!=null;
    (tools/render_frames.mjs) 와 수정 화면에서 "9초에 어떻게 보이나" 를 확인할 때
    쓴다. 애니메이션이 아니라 결과 상태라서, 찍는 쪽이 몇 초를 기다릴 필요가 없다. */
 const _atQ=_p.has('at')?parseFloat(_p.get('at')):null;
-// 녹화 모드 — 우상단 단추를 감춘다. `?bare=1` 로 시작하거나 H 로 껐다 켠다.
+// 맨몸 모드 — 우상단 단추를 감춘다. `?bare=1` 로 시작하거나 H 로 껐다 켠다.
 if(_p.get('bare')==='1')document.body.classList.add('bare');
 // 한 장만 보는 자리 — 진행바·HUD·자막층은 군더더기다
 if(_one){document.body.classList.add('one');}
@@ -546,9 +545,9 @@ let i=_bySrc>=0?_bySrc:Math.max(0,Math.min(slides.length-1,_want-1));
 let started=false, subs=false, timer=null, lead$=null;
 
 /* ★ 자동 넘김 — **내레이션이 끝나면 다음 장으로.**
-   발표 영상이 필요하면 이걸 켜고 화면녹화만 하면 된다. 통합 mp4 를 만들지 않는
-   대신 이 방법을 쓴다 — 지루한 구간은 편집에서 배속·삭제하면 되고, 중간에
-   ←/→ 로 끼어들 수도 있다(수동 조작이 들어오면 자동은 그 장에서 멈추지 않는다).
+   사람 없이 처음부터 끝까지 도는 발표가 필요할 때 켠다(강의장에 걸어 두기 · 검토
+   받기). 중간에 ←/→ 로 끼어들 수도 있다(수동 조작이 들어오면 자동은 그 장에서
+   멈추지 않는다). mp4 파일이 필요하면 이 화면을 담는 게 아니라 `/mp4` 에서 굽는다.
 
    음성이 없는 장은 자막 글자수로 시간을 잡는다. 영상만 있는 장은 영상 길이. */
 let auto=new URLSearchParams(location.search).get('auto')==='1';
@@ -629,13 +628,12 @@ function holdMs(sec){
   return Math.max(DEFAULT_HOLD, Math.min(20000, t.replace(/\s/g,'').length*PER_CHAR));
 }
 /* ★ 발표가 **끝나는 자리.** 예전에는 마지막 장에서 armAuto 가 그냥 빠져나가서,
-   아무 일도 일어나지 않았다 — 배경음악은 `loop` 라 영원히 돌고, 녹화하던 사람은
-   끝난 줄 모르고 계속 찍었다(2026-08-14: "렌더링 끝에서 계속 음악 나오는데
-   어떻게 해요?"). 마지막 장의 말이 끝나면 음악을 2.2초에 걸쳐 내리고 세운 뒤,
-   **바깥(녹화 화면)에 끝났다고 알린다** — 그쪽이 스스로 녹화를 멈춘다. */
+   아무 일도 일어나지 않았다 — 배경음악은 `loop` 라 영원히 돈다(2026-08-14:
+   "렌더링 끝에서 계속 음악 나오는데 어떻게 해요?"). 마지막 장의 말이 끝나면
+   음악을 2.2초에 걸쳐 내리고 세운다. */
 /* 마무리 — 말이 끝나면 **음악을 한 번 올렸다가 내린다.** 그냥 뚝 끊으면 끝인지
    멈춘 건지 알 수 없다. 올라가는 소리가 "이제 끝입니다" 를 말해 주고, 내려가는
-   동안 화면을 잠깐 더 보여 준 뒤 녹화가 멎는다(2026-08-14 지시). */
+   동안 마지막 화면을 잠깐 더 보여 준다(2026-08-14 지시). */
 const OUTRO_UP=1200, OUTRO_HOLD=2600, OUTRO_DOWN=1800;
 
 function endDeck(){
@@ -643,8 +641,7 @@ function endDeck(){
   clearTimeout(hold); clearTimeout(holdH);
   document.body.classList.add('ended');
   paint();
-  // iframe 안에서 돌 때만 의미가 있다. 혼자 열려 있으면 받는 곳이 없을 뿐이다.
-  const done=()=>{ try{ parent.postMessage({sa:'deck-end'},'*'); }catch(e){} };
+  // 음악이 없으면 할 일이 없다 — 마지막 화면이 그대로 남는 것이 곧 끝이다
   if(bgmEl&&bgmWant){
     clearTimeout(duckT); ducked=false;          // 말이 끝났으니 덕킹을 푼다
     bgmFade(Math.min(1,BG.vol*1.8),OUTRO_UP);
@@ -653,12 +650,8 @@ function endDeck(){
       setTimeout(()=>{
         clearInterval(fade$); bgmEl.pause(); bgmWant=false;
         if(bgmBtn)bgmBtn.classList.remove('on');
-        done();
       },OUTRO_DOWN+200);
     },OUTRO_UP+OUTRO_HOLD);
-  }else{
-    // 음악이 없으면 침묵을 5초나 끌 이유가 없다 — 마지막 화면만 잠깐 보여 준다
-    setTimeout(done,2000);
   }
 }
 
@@ -956,7 +949,7 @@ addEventListener('keydown',e=>{
   if(e.key==='c'||e.key==='C'){subs=!subs;if(!subs)cc.className='';}
   if(e.key==='a'||e.key==='A'){setAuto(!auto);}
   if(e.key==='m'||e.key==='M'){bgmSet(!bgmWant);}
-  // 녹화용 — 우상단 단추 감추기/보이기. 녹화를 켜 놓고 손을 뻗어 끌 수 있어야 한다.
+  // 맨몸 — 우상단 단추 감추기/보이기. 띄워 놓고 손을 뻗어 끌 수 있어야 한다.
   if(e.key==='h'||e.key==='H'){document.body.classList.toggle('bare');}
 });
 
@@ -986,7 +979,7 @@ function paint(){
     pz.hidden=false;
     pz.textContent=!auto?'▶ 자동 재생':(paused?'▶ 이어서':'❚❚ 멈춤');
     pz.className=(auto&&!paused)?'on':'';
-    pz.title=!auto?'내레이션이 끝나면 다음 장으로 — 녹화용 (A)':'멈춤 (Space)';
+    pz.title=!auto?'내레이션이 끝나면 다음 장으로 — 자동 재생 (A)':'멈춤 (Space)';
   }
   hud.innerHTML='<b>'+(i+1)+'</b> / '+slides.length
     +(auto?(paused?' &nbsp;<em class="p">멈춤</em>':' &nbsp;<em>자동</em>'):'')
@@ -1107,7 +1100,7 @@ def render_deck(deck: Dict[str, Any], res, *, title: str = "",
            "<div id=\"gate\"><div class=\"gate-in\">"
            "<button type=\"button\" data-go=\"manual\">&#9654; 시작</button>"
            "<button type=\"button\" data-go=\"auto\" class=\"alt\">&#9654;&#9654; 자동 재생</button>"
-           "<p>자동 재생은 내레이션이 끝나면 다음 장으로 넘어갑니다 — 이대로 화면녹화하면 발표 영상이 됩니다.<br>"
+           "<p>자동 재생은 내레이션이 끝나면 다음 장으로 넘어갑니다 — 사람 없이 끝까지 돕니다.<br>"
            "언제든 ←/→ 로 끼어들 수 있고, A 로 자동을 껐다 켤 수 있습니다.</p></div></div>")
         + (f"<audio id=\"bgm\" loop preload=\"auto\" src=\"{bg}\"></audio>"
            "<button id=\"bgmb\" type=\"button\" title=\"배경음악 켜기/끄기 (M)\">"

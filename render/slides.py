@@ -286,7 +286,12 @@ p{margin:0 0 11px;font-size:clamp(14px,1.15vw,17px);color:#4a453f;max-width:62ch
    (#f7f5f1, body 배경)이라 화면 전체가 하나로 안 보였다. 전체 앱의
    body 배경은 그대로 둔다 — 다른 장 종류(표지·판단 등)는 크림 바탕을
    기준으로 태그·색이 설계돼 있어서 거긴 안 건드린다. */
-.s-shots{padding:2vh 7vw 2vh 0.5vw;justify-items:start;background:#fff}
+/* ★ 왼쪽 여백을 **0 으로** 둔다(2026-08-14 지시: "슬라이드는 최대한 좌측으로
+   붙이고 · 좌측으로 붙인 만큼 222에서 조금 늘려주시죠"). 예전 0.5vw(9.6px)를
+   오른쪽 아바타 칸으로 넘겨, 1920 기준 **본문 1688 + 아바타 232** 가 된다.
+   오른쪽 패딩(7vw)은 남겨 두지만 본문 상자가 width 를 직접 가지므로 상자를
+   밀지 않는다 — 다른 장 종류(표지·판단)가 쓰는 값이라 건드리지 않는다. */
+.s-shots{padding:2vh 7vw 2vh 0;justify-items:start;background:#fff}
 .s-shots header{display:none}
 .s-shots h2{margin-bottom:6px}
 .s-shots h2::after{margin-top:6px}
@@ -314,13 +319,24 @@ p{margin:0 0 11px;font-size:clamp(14px,1.15vw,17px);color:#4a453f;max-width:62ch
    달라져서 볼 때마다 다르게 보였다. 영상은 항상 1920px 로 찍히니
    (render_frames.mjs), 그 기준 66%인 1267px 로 못박는다 — 미리보기
    창 크기와 무관하게 항상 이 값이다. */
-/* ★ 창이 1536px 보다 좁으면 상자가 창을 **넘쳐서** 글이 오른쪽 끝까지 가 버린다
-   (2026-08-14 지적: "텍스트가 끝까지 가는 게 약간의 흠"). 화면 배율이 125% 인
-   PC 나 창을 줄인 경우가 그렇다. 좌우 패딩(0.5vw + 7vw)을 뺀 만큼을 상한으로
-   둔다 — 1920 화면에서는 min() 이 1536 을 고르므로 지금과 **완전히 같다.**
-   `max-width` 로는 안 된다: 그리드 칸이 .wrap(1180px)까지만 늘려서, 그보다 큰
-   max-width 는 아무 효과가 없다(그래서 원래도 width 를 직접 준다). */
-.s-shots .m-shots{background:#fff;width:min(1536px,92vw);max-width:none}
+/* ★ 본문 폭 = 1688px. 1920 화면에서 **왼쪽 여백 9.6px + 본문 1688 + 오른쪽 222**
+   이 되게 잡은 값이다(2026-08-14 지시: "222px 로 합시다 · 슬라이드는 최대한
+   좌측으로 붙이고").
+
+   왜 이 숫자인가 — 세로를 직접 키우면 장마다 글자 크기가 튄다. 대신 **옆으로
+   늘리면 배율이 커지고 세로가 따라 자란다**("영상은 저렇게 두고 옆을 늘리는
+   형태"). 실측(88장): 폭 1536 일 때 제일 긴 장이 화면 세로의 91% 였는데,
+   1688 로 넓히면 배율이 1.627 → 1.788 이 되어 **딱 100%** 로 끝난다.
+
+   오른쪽에 남는 222px 이 아바타(우하단) 자리다 — 그래서 이 둘은 한 몸이다.
+   한쪽을 바꾸면 다른 쪽도 같이 바뀐다(#av 의 width 참고).
+
+   ★ 창이 이보다 좁으면 상자가 창을 넘쳐 글이 오른쪽 끝까지 가 버린다(화면
+     배율 125% PC 나 창을 줄인 경우). 88vw 를 상한으로 둔다 — 1920 에서는
+     88vw=1690 이라 min() 이 1688 을 고르므로 값이 그대로다.
+   ★ `max-width` 로는 안 된다: 그리드 칸이 .wrap(1180px)까지만 늘려서, 그보다
+     큰 max-width 는 아무 효과가 없다(그래서 원래도 width 를 직접 준다). */
+.s-shots .m-shots{background:#fff;width:min(1688px,88vw);max-width:none}
 /* ★ `:first-child` 도 붙여 아래 `.m-shots img:first-child{position:absolute}`
    (여러 장 캡션 전환용 — 이 종류엔 항상 이미지가 한 장뿐이라 그게 곧
    first-child 다)와 명시성을 맞춘다. 같은 명시성이면 소스 순서상 저 규칙이
@@ -426,7 +442,9 @@ body.one #bgmb{display:none}
      화면 iframe 은 더 좁은 폭으로 그린 뒤 줄여 보여 준다. px 로 두면 두 자리가
      어긋나 미리보기에서 본 위치와 영상 위치가 달라진다.
    ★ pointer-events:none — 아직 아무것도 없으니 클릭을 먹지 않아야 한다. */
-#av{position:fixed;right:0;bottom:0;width:20%;aspect-ratio:3/4;z-index:7;
+/* 폭 12.1% = 1920 기준 232px — 본문(1688px)이 왼쪽 끝에 붙고 남긴 바로 그 칸이다.
+   본문 폭과 **한 몸**이라 한쪽을 바꾸면 여기도 같이 바꿔야 한다. */
+#av{position:fixed;right:0;bottom:0;width:12.1%;aspect-ratio:3/4;z-index:7;
     pointer-events:none}
 body.one #av{display:none}
 /* ★ 녹화 모드 — 우상단 단추를 통째로 감춘다(2026-08-14 지시: "여기의 우상단을

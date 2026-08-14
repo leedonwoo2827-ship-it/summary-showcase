@@ -750,7 +750,8 @@ export async function mount(root, ctx) {
     fr.loading = "lazy";
     fr.title = `슬라이드 ${s.no}`;
     stage.appendChild(fr);
-    fitFrame(stage, fr);
+    // 영상과 같은 픽셀로 그린다 — 여기서 본 것이 곧 영상이다(1920x1080)
+    fitFrame(stage, fr, 1920);
     const open = el("a", "focus-open");
     open.href = `/preview/${state.projectId}?n=${s.no}#${s.no}`;
     open.target = "_blank";

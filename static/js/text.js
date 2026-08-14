@@ -158,7 +158,8 @@ export async function mount(root, ctx) {
     fr.src = `/preview/${state.projectId}?n=${s.no}#${s.no}`;
     fr.title = `슬라이드 ${s.no}`;
     st.appendChild(fr);
-    fitFrame(st, fr);
+    // 영상과 같은 픽셀로 그린다 — 여기서 본 것이 곧 영상이다(1920x1080)
+    fitFrame(st, fr, 1920);
     const reload = debounce(() => {
       fr.src = `/preview/${state.projectId}?n=${s.no}&t=${Date.now()}#${s.no}`;
     }, 1200);

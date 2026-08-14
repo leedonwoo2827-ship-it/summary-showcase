@@ -1,0 +1,20 @@
+[project]
+name = "present-agent"
+version = "0.1.0"
+description = "개발자 쇼케이스 지원 에이전트 — 화면녹화·레포·라이브 URL 을 슬라이드 쇼케이스 한 장으로"
+requires-python = ">=3.10,<3.14"
+dependencies = [
+  "fastapi>=0.110",
+  "uvicorn>=0.27",
+  "claude-agent-sdk>=0.2.130",
+  "pydantic>=2.6",
+  "fonttools>=4.50",
+  "brotli>=1.1",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["core", "llm", "pipeline", "render"]

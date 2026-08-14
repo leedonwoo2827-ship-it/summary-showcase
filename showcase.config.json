@@ -1,0 +1,48 @@
+{
+  "port": 5178,
+  "auth": "claude-code",
+  "vision_mode": "inline",
+  "models": {
+    "caption": "claude-sonnet-5",
+    "link": "claude-sonnet-5",
+    "decisions": "claude-opus-5",
+    "script": "claude-opus-5",
+    "theme": "claude-opus-5"
+  },
+  "effort": {
+    "caption": "medium",
+    "link": "medium",
+    "decisions": "high",
+    "script": "high",
+    "theme": "medium"
+  },
+  "budget_usd": {
+    "per_stage": 1.5,
+    "warn_total": 5.0
+  },
+  "frames": {
+    "min_gap_sec": 1.5,
+    "max_frames": 12,
+    "display_width": 1600,
+    "vision_width": 1024,
+    "sample_fps": 4
+  },
+  "narration": {
+    "chars_per_sec": 3.0,
+    "voice": "F2",
+    "speed": 1.0,
+    "total_step": 8
+  },
+  "tts": {
+    "engine": "none",
+    "python": null,
+    "voicewright_dir": null,
+    "assets_dir": null,
+    "timeout_ms": 300000
+  },
+  "render": {
+    "seed_hex": "#9a4d33",
+    "max_single_file_mb": 10,
+    "single_file_audio": "opus32"
+  }
+}

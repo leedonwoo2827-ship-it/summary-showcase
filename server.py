@@ -1,0 +1,1573 @@
+# -*- coding: utf-8 -*-
+"""개발자 프레젠트 지원 에이전트 — 로컬 콘솔 서버.
+
+FastAPI + 무빌드 바닐라 SPA. 사내 표준(qa20batch · aim-local · xam-local ·
+instructional-design-agent)과 같은 형태다.
+
+산출물은 앱 폴더 밖 형제 폴더에 쌓인다 — core/workspace.py 참고.
+"""
+from __future__ import annotations
+
+import os
+import re
+import subprocess
+import sys
+import threading
+import webbrowser
+from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+from datetime import datetime
+
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+
+from core import (activity, config, htmldoc, manuscript as ms, refs as refs_mod,
+                  versions, workspace as ws)
+from core.jobs import get_registry
+from pipeline.registry import (STAGES, cached_data, read_cache,
+                               stage_states, write_cache)
+import pipeline.s0_prd     # noqa: F401
+import pipeline.s0a_ask    # noqa: F401
+import pipeline.s1_frames  # noqa: F401  — import 시 STAGES 에 run 을 붙인다
+import pipeline.s2_repo    # noqa: F401
+import pipeline.s2b_outline  # noqa: F401
+import pipeline.s2c_capture  # noqa: F401
+import pipeline.s3_caption  # noqa: F401
+import pipeline.s3b_images  # noqa: F401
+import pipeline.s5_decisions # noqa: F401
+import pipeline.s6_script   # noqa: F401
+import pipeline.s7_copy     # noqa: F401
+import pipeline.s8_assemble # noqa: F401
+import pipeline.s9_render   # noqa: F401
+import pipeline.s10_tts     # noqa: F401
+import pipeline.s11_audio   # noqa: F401
+import pipeline.s12_video   # noqa: F401
+
+APP_DIR = Path(__file__).resolve().parent
+STATIC = APP_DIR / "static"
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """서버가 실제로 듣기 시작한 뒤에 브라우저를 연다.
+
+    run.bat 에서 `start ""` 로 먼저 열면 부팅(1~3초)을 앞질러
+    ERR_CONNECTION_REFUSED 페이지가 뜬다 — IDA 에서 실제로 겪은 문제.
+
+    ★ `@app.on_event("startup")` 은 최신 FastAPI 에서 deprecated 라 조용히
+      안 도는 경우가 있다(실제로 창이 안 떴다). lifespan 이 현재 방식이다.
+    """
+    if os.environ.get("SHOWCASE_OPEN_BROWSER") == "1":
+        port = config.load()["port"]
+        threading.Timer(0.8, lambda: webbrowser.open(f"http://localhost:{port}")).start()
+    yield
+
+
+app = FastAPI(title="개발자 프레젠트 지원 에이전트", docs_url=None, redoc_url=None,
+              lifespan=lifespan)
+
+
+# ── 정적 ───────────────────────────────────────────────────────────────────
+@app.get("/")
+def index() -> FileResponse:
+    return FileResponse(str(STATIC / "index.html"))
+
+
+class FreshStatic(StaticFiles):
+    """★ 브라우저 캐시를 끈다.
+
+    이 앱은 무빌드다 — 파일명에 해시가 안 붙으니 브라우저가 예전 .js 를 계속
+    쓴다. 고쳐 놓고 "안 고쳐졌는데요" 를 몇 번이나 겪었고, 그때마다 사람이
+    Ctrl+Shift+R 을 눌러야 했다. 로컬에서 도는 앱이라 캐시로 아낄 게 없다.
+    """
+
+    def is_not_modified(self, *a, **kw) -> bool:
+        return False                      # 304 도 주지 않는다
+
+    async def get_response(self, path: str, scope):
+        r = await super().get_response(path, scope)
+        r.headers["cache-control"] = "no-store, must-revalidate"
+        return r
+
+
+app.mount("/static", FreshStatic(directory=str(STATIC)), name="static")
+
+
+# ── 건강 확인 ──────────────────────────────────────────────────────────────
+@app.get("/api/health")
+def health() -> Dict[str, Any]:
+    from llm.claude_provider import find_cli
+
+    exe = find_cli()
+    return {
+        "ok": True,
+        "app_dir": str(APP_DIR),
+        "workspace": ws.describe(),
+        "claude_cli": str(exe) if exe else None,
+        "vision_mode": config.load()["vision_mode"],
+        "python": sys.version.split()[0],
+    }
+
+
+# ── 설정 ───────────────────────────────────────────────────────────────────
+@app.get("/api/settings")
+def get_settings() -> Dict[str, Any]:
+    cfg = dict(config.load())
+    cfg["workspace"] = ws.describe()
+    return cfg
+
+
+@app.post("/api/settings")
+def post_settings(patch: Dict[str, Any]) -> Dict[str, Any]:
+    cfg = dict(config.save(patch))
+    cfg["workspace"] = ws.describe()
+    return cfg
+
+
+# ── 프로젝트 ───────────────────────────────────────────────────────────────
+class ProjectIn(BaseModel):
+    """만들 때 받는 **좌표**. 제목 말고는 전부 선택이다.
+
+    ★ 제목을 안 적어도 된다 — 레포 이름이나 영상 폴더 이름에서 따온다. 시작할 때
+      제목부터 고민하게 만들면 시작이 안 된다. 나중에 S0 기획서가 더 나은 제목을
+      제안하고, 덱 제목은 S2b 가 따로 짓는다.
+
+    ★ 사이트는 **여러 개**다. 서비스 본체와 중계기처럼 주소가 갈리는 경우가 있다.
+    ★ `refs` 는 레포에도 영상에도 없는 재료 — 구조 설명 HTML, 기획 메모 같은 것.
+    """
+    title: str | None = None
+    slug: str | None = None
+    video_dir: str | None = None
+    live_url: str | None = None            # 남겨 둔다(예전 화면 호환)
+    urls: List[Dict[str, str]] | None = None   # [{"url":…, "label":…}]
+    repo: str | None = None                # "owner/name" (예전 화면 호환)
+    # ★ 레포와 라이브 URL은 **쌍**이다 — 레포마다 사이트가 있을 수도, 없을 수도 있다
+    #   (로컬 앱·플러그인처럼). 한 발표가 레포 하나로 끝나지 않는 경우가 많다.
+    sources: List[Dict[str, str]] | None = None   # [{"repo":…, "url":…}]
+    refs: List[str] | None = None          # 참고 문서 경로(파일 또는 폴더) — 서버 로컬 경로
+    ref_uploads: List[Dict[str, str]] | None = None  # [{"name":…, "data_url":…}] — 드래그앤드롭. 브라우저는 경로를 안 준다
+
+
+@app.get("/api/projects")
+def list_projects() -> List[Dict[str, Any]]:
+    return ws.list_projects()
+
+
+def _find(pid: int) -> Dict[str, Any]:
+    for p in ws.list_projects():
+        if p["id"] == int(pid):
+            doc = ws.load_project(pid, p["slug"])
+            if doc:
+                return doc
+    raise HTTPException(status_code=404, detail="프로젝트를 찾을 수 없습니다")
+
+
+@app.get("/api/projects/{pid}")
+def get_project(pid: int) -> Dict[str, Any]:
+    return _find(pid)
+
+
+@app.post("/api/projects")
+def create_project(body: ProjectIn) -> Dict[str, Any]:
+    # ★ 영상은 **없어도 된다.** 레포만으로도 발표는 나온다. 나중에 더 찍어서
+    #   폴더에 넣고 프레임 단계를 다시 돌리면 그때 항목이 는다.
+    files: List[Path] = []
+    vdir = None
+    if (body.video_dir or "").strip():
+        vdir = Path(body.video_dir.strip().strip('"')).expanduser()
+        if not vdir.is_dir():
+            raise HTTPException(status_code=400, detail=f"영상 폴더가 없습니다: {vdir}")
+        exts = {".mkv", ".mp4", ".mov", ".webm", ".avi"}
+        files = sorted([f for f in vdir.iterdir()
+                        if f.is_file() and f.suffix.lower() in exts],
+                       key=lambda f: ws.nfc(f.name))
+
+    # 좌표 쌍 — 새 화면은 sources 를, 예전 화면은 repo/live_url 을 준다
+    sources = [{"repo": (s.get("repo") or "").strip(),
+                "url": (s.get("url") or "").strip()}
+               for s in (body.sources or []) if (s.get("repo") or "").strip()]
+    if not sources and body.repo:
+        sources = [{"repo": body.repo.strip(), "url": (body.live_url or "").strip()}]
+
+    urls = [u for u in (body.urls or []) if (u or {}).get("url")]
+    if not urls:
+        urls = [{"url": s["url"], "label": s["repo"].split("/")[-1]}
+                for s in sources if s["url"]]
+    if body.live_url and not urls:
+        urls = [{"url": body.live_url, "label": "라이브"}]
+    if not files and not sources and not urls and not body.refs and not body.ref_uploads:
+        raise HTTPException(status_code=400,
+                            detail="레포 · 영상 폴더 · 사이트 · 참고 자료 중 하나는 있어야 합니다")
+
+    # ★ 제목이 없으면 만들어 준다 — 시작할 때 제목부터 고민하게 하지 않는다
+    title = (body.title or "").strip()
+    if not title:
+        if sources:
+            title = sources[0]["repo"].rstrip("/").split("/")[-1].removesuffix(".git")
+        elif vdir:
+            title = ws.nfc(vdir.name).lstrip("_")
+        elif urls:
+            title = re.sub(r"^https?://(www\.)?", "", urls[0]["url"]).split("/")[0]
+        elif body.ref_uploads:
+            title = ws.nfc(Path(body.ref_uploads[0].get("name") or "").stem) or "새 발표"
+        elif body.refs:
+            title = ws.nfc(Path(str(body.refs[0])).stem) or "새 발표"
+        else:
+            title = "새 발표"
+
+    items = [{
+        "id": f"v{i}",
+        "file": ws.nfc(f.name),
+        "title": ws.nfc(f.stem),
+        "route_hint": None,
+        "api_hint": [],
+        "frame_count": config.load()["frames"]["max_frames"],
+        "include": True,
+        "media_mode": None,
+    } for i, f in enumerate(files, 1)]
+
+    pid = ws.next_pid()
+    slug = ws.ascii_slug(body.slug or title)
+    doc = {
+        "schema_version": 1,
+        "slug": slug,
+        "title": title,
+        "live_url": urls[0]["url"] if urls else None,
+        "urls": urls,
+        "language": "ko",
+        "media_mode": "still",
+        "video_dir": str(vdir) if vdir else None,
+        "items": items,
+        "sources": sources,
+        "repo": ({"name_with_owner": sources[0]["repo"], "ref": "main",
+                  "include": [], "exclude": [], "redact": []} if sources else None),
+        "narration": dict(config.load()["narration"], enabled=True),
+        "models": dict(config.load()["models"]),
+    }
+    ws.save_project(pid, slug, doc)
+    # 참고 자료는 **복사해 둔다** — 원본이 옮겨져도 발표가 안 깨져야 한다
+    # ★ 문이 둘이다 — 서버 로컬 경로(refs) 와 드래그앤드롭 업로드(ref_uploads).
+    #   둘 다 오면 번호를 이어 붙여 한 목록으로 합친다.
+    if body.refs or body.ref_uploads:
+        items: List[Dict[str, Any]] = []
+        refs_dir = None
+        if body.refs:
+            got = refs_mod.collect(pid, slug, body.refs)
+            refs_dir, items = got["dir"], got["items"]
+        if body.ref_uploads:
+            got2 = refs_mod.collect_uploaded(pid, slug, body.ref_uploads,
+                                             start=len(items) + 1)
+            refs_dir = refs_dir or got2["dir"]
+            items += got2["items"]
+        doc["refs"] = {"dir": refs_dir, "items": items}
+        ws.save_project(pid, slug, doc)
+    return ws.load_project(pid, slug)
+
+
+class RecopyIn(BaseModel):
+    """한 장만 문구를 다시 뽑는다.
+
+    ★ 전체(37장)를 다시 돌리면 $0.73 이고 이미 확정한 장까지 갈아엎는다.
+      한 장이 마음에 안 들 때 그 한 장만 다시 뽑는 자리가 있어야, 사람이
+      "이건 좀 아닌데" 를 눌러서 해결할 수 있다.
+
+    `hint` 는 사람이 주는 지시다 — "더 짧게", "숫자를 앞에", "기업 회원 화면 얘기로".
+    """
+    tone: str | None = None
+    hint: str = ""
+    only: str | None = None      # "title" | "body" | None(둘 다)
+
+
+@app.post("/api/projects/{pid}/recopy/{no}")
+def recopy_slide(pid: int, no: int, body: RecopyIn) -> Dict[str, Any]:
+    from pipeline.s7_copy import DEFAULT_TONE, SCHEMA, TONES, build_brief, clean
+    from llm.claude_provider import ClaudeProvider
+
+    doc = _find(pid)
+    slug = doc["slug"]
+    deck = cached_data(pid, slug, "s2b-outline") or {}
+    sl = next((x for x in (deck.get("slides") or []) if x["no"] == no), None)
+    if not sl:
+        raise HTTPException(status_code=404, detail=f"{no}번 장이 없습니다")
+    dec = (cached_data(pid, slug, "s5-decisions") or {}).get("slides", {})
+
+    tone = body.tone or doc.get("slide_tone") or DEFAULT_TONE
+    if tone not in TONES:
+        tone = DEFAULT_TONE
+
+    cfg = config.load()
+    system = (APP_DIR / "llm" / "prompts" / "copy.md").read_text(encoding="utf-8")
+    brief = build_brief([sl], deck, dec, tone)
+    if body.hint.strip():
+        brief += ("\n\n# 사람이 준 지시 — **이걸 최우선으로 따른다**\n"
+                  + body.hint.strip())
+
+    p = ClaudeProvider(
+        model=(doc.get("models") or cfg["models"]).get("script") or cfg["models"]["script"],
+        effort=cfg["effort"].get("script", "high"),
+        allowed_tools=[], max_turns=1, budget_usd=cfg["budget_usd"]["per_stage"],
+    )
+    try:
+        raw = p.structured(system, [{"role": "user", "content": brief}], schema=SCHEMA)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"{type(e).__name__}: {str(e)[:160]}")
+
+    r = next((x for x in (raw.get("slides") or []) if int(x.get("no") or 0) == no), None)
+    if not r or not clean(r.get("title")):
+        raise HTTPException(status_code=502, detail="문구가 비어 돌아왔습니다")
+
+    title, note = clean(r.get("title")), clean(r.get("body"))
+    prev = (ws.load_overrides(pid, slug).get("slides", {}).get(str(no)) or {})
+    if body.only == "title":
+        note = prev.get("note", note)
+    elif body.only == "body":
+        title = prev.get("title", title)
+    ov = ws.load_overrides(pid, slug)
+    cur = ov.setdefault("slides", {}).setdefault(str(no), {})
+    cur["title"], cur["note"] = title, note
+    ws.save_overrides(pid, slug, ov)
+    return {"ok": True, "no": no, "title": title, "note": note,
+            "tone": tone, "cost_usd": round(p.last_cost_usd, 4)}
+
+
+@app.get("/api/projects/{pid}/verify/{no}")
+def verify_slide(pid: int, no: int) -> Dict[str, Any]:
+    """근거 검증 — **이 장이 인용한 경로가 레포에 진짜 있나.**
+
+    공짜다(파일 존재 확인일 뿐). 지어낸 경로가 발표 자료에 실리는 것이 가장 나쁘고,
+    문구를 손으로 고치다 보면 경로만 남고 내용이 어긋나는 일이 생긴다.
+    """
+    doc = _find(pid)
+    slug = doc["slug"]
+    repo = cached_data(pid, slug, "s2-repo") or {}
+    clone = Path(repo["clone_dir"]) if repo.get("clone_dir") else None
+    shas = {c["sha"] for c in (repo.get("commits") or [])}
+
+    dec = (cached_data(pid, slug, "s5-decisions") or {}).get("slides", {}).get(str(no)) or {}
+    outline = cached_data(pid, slug, "s2b-outline") or {}
+    sl = next((x for x in (outline.get("slides") or []) if x["no"] == no), {})
+
+    refs: List[str] = [str(e.get("ref")) for e in (dec.get("evidence") or []) if e.get("ref")]
+    if not refs and sl.get("evidence_hint"):
+        raw = str(sl["evidence_hint"]).replace(",", "\n")
+        refs = [x.strip() for x in raw.split("\n") if x.strip()]
+
+    out = []
+    for ref in refs[:8]:
+        head = ref.split(":")[0].strip()
+        if re.fullmatch(r"[0-9a-f]{7,40}", head):
+            ok = any(x.startswith(head) for x in shas)
+            out.append({"ref": ref, "kind": "commit", "ok": ok})
+        else:
+            ok = bool(clone and (clone / head).exists())
+            out.append({"ref": ref, "kind": "file", "ok": ok})
+    bad = [x for x in out if not x["ok"]]
+    return {"no": no, "checked": len(out), "bad": len(bad), "items": out,
+            "repo": bool(clone)}
+
+
+@app.get("/api/projects/{pid}/imgprompt/{no}")
+def img_prompt(pid: int, no: int) -> Dict[str, Any]:
+    """그 장에 넣을 **그림 프롬프트**.
+
+    이미지 에이전트(`260628-로컬이미지_앞에프롬프트필더`)에 그대로 붙여 넣는다.
+    프롬프트를 여기서 보여 주는 이유: 파일(`09_이미지/slides.json`)만 내보내면
+    사람이 그 파일을 열어 해당 번호를 찾아야 한다. 그림을 넣는 자리에서 바로
+    복사되는 게 맞다 — 요청과 납품이 한 화면에 있어야 한다.
+    """
+    from pipeline.s3b_images import STYLE, build_prompt
+
+    doc = _find(pid)
+    slug = doc["slug"]
+    outline = cached_data(pid, slug, "s2b-outline") or {}
+    sl = next((x for x in (outline.get("slides") or []) if x["no"] == no), None)
+    if not sl:
+        raise HTTPException(status_code=404, detail=f"{no}번 장이 없습니다")
+    dec = (cached_data(pid, slug, "s5-decisions") or {}).get("slides", {})
+    return {"no": no, "title": sl.get("title") or "",
+            "prompt": build_prompt(sl, dec), "style": STYLE,
+            "file": f"{no:03d}.png"}
+
+
+class SlideImageIn(BaseModel):
+    """슬라이드에 붙일 그림 한 장.
+
+    ★ multipart 대신 **base64 JSON** 을 받는다. `python-multipart` 를 새로
+      깔지 않으려는 것이다 — 의존성 하나가 동료 PC 에서 setup 을 깨뜨리는 일이
+      실제로 잦고, 그림 한 장은 base64 로도 충분히 작다.
+    """
+    data_url: str
+    name: str = ""
+
+
+IMG_MIME = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp",
+            "image/gif": ".gif"}
+
+SHOTS_DIR = "01b_캡처"          # tools/shots.mjs 가 떨어뜨리는 곳
+SHOTS_INDEX = "shots.json"
+
+
+@app.post("/api/projects/{pid}/slide-image/{no}")
+def put_slide_image(pid: int, no: int, body: SlideImageIn,
+                    i: int = 1) -> Dict[str, Any]:
+    """그 장의 그림을 **여기서 바로 바꾼다.**
+
+    파일명은 슬라이드 번호로 고정한다(`005.png`). 규칙이 하나여야 이미지 앱이 낸
+    것과 사람이 찍은 것이 같은 자리에 앉는다.
+    """
+    import base64 as _b64
+
+    doc = _find(pid)
+    m = re.match(r"^data:([^;]+);base64,(.+)$", body.data_url or "", re.S)
+    if not m:
+        raise HTTPException(status_code=400, detail="이미지 형식을 알 수 없습니다")
+    mime, b64 = m.group(1).lower(), m.group(2)
+    ext = IMG_MIME.get(mime)
+    if not ext:
+        raise HTTPException(status_code=400,
+                            detail=f"지원하지 않는 형식입니다: {mime}")
+    try:
+        raw = _b64.b64decode(b64)
+    except Exception:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail="이미지를 읽지 못했습니다")
+    if len(raw) > 12_000_000:
+        raise HTTPException(status_code=400, detail="12MB 를 넘습니다")
+
+    return _attach_slide_image(pid, doc, no, i, raw, ext)
+
+
+def _attach_slide_image(pid: int, doc: Dict[str, Any], no: int, i: int,
+                        raw: bytes, ext: str) -> Dict[str, Any]:
+    """바이트를 그 장의 자리에 앉힌다 — 드롭존과 캡처 고르기가 같이 쓴다.
+
+    ★ 들어오는 길이 둘이어도 **앉는 자리는 하나**여야 한다. 캡처를 고른 그림이
+      `00_기획/참고/` 가 아닌 딴 곳에 있으면, 덱을 굽거나 폴더째 옮길 때
+      한쪽만 따라오지 않는다.
+    """
+    d = ws.sub_dir(pid, doc["slug"], "prd", "참고")
+    # ★ 한 장에 여러 그림. 두 번째부터는 `-2`, `-3` 이 붙는다.
+    #   멘토링처럼 신청 화면과 수락 화면이 따로 있는 메뉴는 한 컷으로 안 된다.
+    stem = f"{no:03d}" if i <= 1 else f"{no:03d}-{int(i)}"
+    # 같은 자리의 옛 파일은 치운다 — 확장자가 달라 둘 다 남으면 뭐가 붙는지 모른다
+    for old in d.glob(f"{stem}.*"):
+        try:
+            old.unlink()
+        except OSError:
+            pass
+    p = d / f"{stem}{ext}"
+    p.write_bytes(raw)
+    rel = f"{ws.STEPS['prd'][0]}/참고/{p.name}"
+
+    # 덱이 바로 쓰게 오버라이드에 박는다(스테이지를 안 돌려도 보인다)
+    ov = ws.load_overrides(pid, doc["slug"])
+    cur = ov.setdefault("slides", {}).setdefault(str(no), {})
+    shots = list(cur.get("images") or ([cur["image"]] if cur.get("image") else []))
+    idx = max(1, int(i)) - 1
+    while len(shots) <= idx:
+        shots.append("")
+    shots[idx] = rel
+    shots = [x for x in shots if x]
+    cur["images"] = shots
+    cur["image"] = shots[0]
+    ws.save_overrides(pid, doc["slug"], ov)
+    return {"ok": True, "file": rel, "bytes": len(raw), "name": p.name,
+            "index": int(i), "images": shots}
+
+
+@app.get("/api/projects/{pid}/shots")
+def get_shots(pid: int) -> Dict[str, Any]:
+    """화면 캡처 목록 — `01b_캡처/shots.json`.
+
+    ★ 폴더를 훑지 않고 **매니페스트만** 읽는다. 폴더에는 옛 이름이 남아 있을 수
+      있고, 무엇보다 순서·그룹·"어느 역할 메뉴였는지" 는 파일명에 없다.
+    """
+    doc = _find(pid)
+    root = ws.project_dir(pid, doc["slug"], create=False)
+    idx = root / SHOTS_DIR / SHOTS_INDEX
+    if not idx.is_file():
+        return {"ok": False, "dir": SHOTS_DIR, "shots": [],
+                "hint": f"node tools/shots.mjs <config.json> — 결과를 {SHOTS_DIR}/ 에"}
+    doc_json = ws.read_json(idx, {}) or {}
+    out = []
+    for s in doc_json.get("shots", []):
+        if s.get("status") != "ok":
+            continue
+        rel = f"{SHOTS_DIR}/{s.get('file','')}"
+        if not (root / rel).is_file():
+            continue
+        out.append({
+            "file": rel, "label": s.get("label") or "", "slug": s.get("slug") or "",
+            "role": s.get("role") or "", "role_label": s.get("role_label") or "",
+            "group": s.get("group") or "", "no": s.get("no") or 0,
+            "path": s.get("path") or "", "common": bool(s.get("common")),
+            "roles": s.get("roles") or [],
+        })
+    return {"ok": True, "dir": SHOTS_DIR, "base": doc_json.get("base") or "",
+            "shots": out}
+
+
+class ShotPickIn(BaseModel):
+    file: str          # `01b_캡처/personal/personal-03-career.png`
+
+
+@app.post("/api/projects/{pid}/slide-image/{no}/from-shot")
+def pick_slide_image(pid: int, no: int, body: ShotPickIn,
+                     i: int = 1) -> Dict[str, Any]:
+    """캡처 한 장을 그 장의 자리에 복사한다.
+
+    ★ 원본을 **참조하지 않고 복사한다.** 캡처는 사이트가 바뀌면 다시 찍혀
+      덮어써지는 물건이라, 참조로 두면 확정한 발표의 그림이 나중에 조용히 바뀐다.
+    """
+    doc = _find(pid)
+    root = ws.project_dir(pid, doc["slug"], create=False).resolve()
+    rel = (body.file or "").replace("\\", "/")
+    if not rel.startswith(SHOTS_DIR + "/") or ".." in rel or ":" in rel:
+        raise HTTPException(status_code=400, detail="캡처 폴더 밖입니다")
+    src = (root / rel).resolve()
+    try:
+        src.relative_to(root)
+    except ValueError:
+        raise HTTPException(status_code=403, detail="폴더 밖")
+    if not src.is_file():
+        raise HTTPException(status_code=404, detail="없는 캡처")
+    ext = src.suffix.lower()
+    if ext not in {".png", ".jpg", ".jpeg", ".webp"}:
+        raise HTTPException(status_code=400, detail=f"지원하지 않는 형식: {ext}")
+    r = _attach_slide_image(pid, doc, no, i, src.read_bytes(), ext)
+
+    # ★ 어느 캡처에서 왔는지를 남긴다. 복사본은 `003.png` 라 출처가 지워지는데,
+    #   19장을 훑는 동안 "이건 이미 썼다" 가 안 보이면 같은 화면을 두 번 넣는다.
+    ov = ws.load_overrides(pid, doc["slug"])
+    cur = ov.setdefault("slides", {}).setdefault(str(no), {})
+    srcs = list(cur.get("image_srcs") or [])
+    idx = max(1, int(i)) - 1
+    while len(srcs) <= idx:
+        srcs.append("")
+    srcs[idx] = rel
+    cur["image_srcs"] = srcs[:len(r["images"])]
+    ws.save_overrides(pid, doc["slug"], ov)
+    r["image_srcs"] = cur["image_srcs"]
+    return r
+
+
+# 배경음악 기본 볼륨 — **아주 작게 깐다.** 배경음악은 알아채면 이미 큰 것이고,
+# 이 앱의 발표는 처음부터 끝까지 말이 깔린다. 귀로 맞춰야 하는 값이라
+# 프로젝트별로 project.json 의 bgm.volume / bgm.duck 에서 덮어쓴다.
+BGM_VOL, BGM_DUCK = 0.15, 0.04
+
+AUDIO_MIME = {"audio/mpeg": ".mp3", "audio/mp3": ".mp3", "audio/mp4": ".m4a",
+              "audio/x-m4a": ".m4a", "audio/ogg": ".opus", "audio/wav": ".wav",
+              "audio/x-wav": ".wav", "audio/webm": ".opus"}
+
+
+class BgmIn(BaseModel):
+    """배경음악 한 곡. 그림과 같은 base64 JSON 이다(python-multipart 를 안 깐다)."""
+    data_url: str
+    name: str = ""
+
+
+@app.get("/api/projects/{pid}/bgm")
+def get_bgm(pid: int) -> Dict[str, Any]:
+    doc = _find(pid)
+    cfg = doc.get("bgm") or {}
+    rel = str(cfg.get("file") or "")
+    ok = bool(rel) and (ws.project_dir(pid, doc["slug"], create=False) / rel).is_file()
+    return {"ok": ok, "file": rel if ok else "", "name": cfg.get("name") or "",
+            "volume": cfg.get("volume") or BGM_VOL, "duck": cfg.get("duck") or BGM_DUCK}
+
+
+@app.post("/api/projects/{pid}/bgm")
+def put_bgm(pid: int, body: BgmIn) -> Dict[str, Any]:
+    """배경음악을 프로젝트 안으로 들인다.
+
+    ★ 원본을 **프로젝트 폴더에 복사한다.** 완성본의 `assets/` 는 렌더할 때마다
+      통째로 지워지고(s9_render), 바깥 경로를 참조해 두면 그 PC 를 떠나는 순간
+      끊긴다. 발표물은 폴더째 옮겨 다니는 물건이다.
+    """
+    import base64 as _b64
+
+    doc = _find(pid)
+    m = re.match(r"^data:([^;]+);base64,(.+)$", body.data_url or "", re.S)
+    if not m:
+        raise HTTPException(status_code=400, detail="오디오 형식을 알 수 없습니다")
+    mime, b64 = m.group(1).lower(), m.group(2)
+    ext = AUDIO_MIME.get(mime)
+    if not ext:
+        raise HTTPException(status_code=400, detail=f"지원하지 않는 형식입니다: {mime}")
+    try:
+        raw = _b64.b64decode(b64)
+    except Exception:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail="오디오를 읽지 못했습니다")
+    if len(raw) > 12_000_000:
+        raise HTTPException(status_code=400, detail="12MB 를 넘습니다")
+
+    d = ws.step_dir(pid, doc["slug"], "audio")
+    for old in d.glob("bgm.*"):          # 확장자가 달라 둘 다 남으면 뭐가 붙는지 모른다
+        try:
+            old.unlink()
+        except OSError:
+            pass
+    p = d / f"bgm{ext}"
+    p.write_bytes(raw)
+
+    rel = f"{ws.STEPS['audio'][0]}/{p.name}"
+    doc["bgm"] = {"file": rel, "name": body.name or p.name,
+                  "volume": (doc.get("bgm") or {}).get("volume") or BGM_VOL,
+                  "duck": (doc.get("bgm") or {}).get("duck") or BGM_DUCK}
+    ws.save_project(pid, doc["slug"], doc)
+    return {"ok": True, "file": rel, "name": doc["bgm"]["name"], "bytes": len(raw)}
+
+
+@app.delete("/api/projects/{pid}/bgm")
+def del_bgm(pid: int) -> Dict[str, Any]:
+    doc = _find(pid)
+    d = ws.step_dir(pid, doc["slug"], "audio", create=False)
+    n = 0
+    if d.is_dir():
+        for old in d.glob("bgm.*"):
+            try:
+                old.unlink(); n += 1
+            except OSError:
+                pass
+    doc.pop("bgm", None)
+    ws.save_project(pid, doc["slug"], doc)
+    return {"ok": True, "removed": n}
+
+
+@app.delete("/api/projects/{pid}/slide-image/{no}")
+def del_slide_image(pid: int, no: int, i: int = 1) -> Dict[str, Any]:
+    doc = _find(pid)
+    d = ws.sub_dir(pid, doc["slug"], "prd", "참고", create=False)
+    stem = f"{no:03d}" if i <= 1 else f"{no:03d}-{int(i)}"
+    n = 0
+    if d.is_dir():
+        for old in d.glob(f"{stem}.*"):
+            try:
+                old.unlink(); n += 1
+            except OSError:
+                pass
+    ov = ws.load_overrides(pid, doc["slug"])
+    cur = ov.get("slides", {}).get(str(no)) or {}
+    shots = list(cur.get("images") or ([cur["image"]] if cur.get("image") else []))
+    idx = max(1, int(i)) - 1
+    if idx < len(shots):
+        shots.pop(idx)
+    # 출처 기록도 같이 민다 — 안 그러면 뺀 캡처가 고르기 격자에서 계속 "썼음" 이다
+    srcs = list(cur.get("image_srcs") or [])
+    if idx < len(srcs):
+        srcs.pop(idx)
+    if shots:
+        cur["images"], cur["image"] = shots, shots[0]
+    else:
+        cur.pop("images", None)
+        cur.pop("image", None)
+    if srcs:
+        cur["image_srcs"] = srcs[:len(shots)]
+    else:
+        cur.pop("image_srcs", None)
+    ws.save_overrides(pid, doc["slug"], ov)
+    return {"ok": True, "removed": n, "images": shots,
+            "image_srcs": cur.get("image_srcs") or []}
+
+
+class RefsIn(BaseModel):
+    paths: List[str]
+
+
+@app.post("/api/projects/{pid}/refs")
+def post_refs(pid: int, body: RefsIn) -> Dict[str, Any]:
+    """참고 자료를 나중에 더 넣는다. 중계기 구조 HTML 같은 것."""
+    doc = _find(pid)
+    got = refs_mod.collect(pid, doc["slug"], body.paths)
+    cur = (doc.get("refs") or {}).get("items") or []
+    seen = {i["source"] for i in cur}
+    cur += [i for i in got["items"] if i["source"] not in seen]
+    for n, it in enumerate(cur, 1):
+        it["id"] = f"r{n}"
+    doc["refs"] = {"dir": got["dir"], "items": cur}
+    ws.save_project(pid, doc["slug"], doc)
+    return doc["refs"]
+
+
+@app.get("/api/projects/{pid}/activity")
+def get_activity(pid: int) -> Dict[str, Any]:
+    """최근 한 일 · 다시 해야 할 것 — 오른쪽 서랍(#log-rail)이 읽는다.
+
+    ★ 이력 파일을 따로 쓰지 않는다. 디스크에 이미 있는 것(캐시·산출물 파일 시각)만
+      읽어서 만든다 — 그래야 목록이 항상 실제와 같다.
+    """
+    doc = _find(pid)
+    return activity.build(pid, doc["slug"], doc)
+
+
+@app.delete("/api/projects/{pid}")
+def hide_project(pid: int) -> Dict[str, Any]:
+    """★ 감추기다. 지우기가 아니다 — 폴더는 그대로 두고 경로를 돌려준다."""
+    doc = _find(pid)
+    return {"ok": True, "dir": ws.hide_project(pid, doc["slug"]),
+            "title": doc.get("title") or doc.get("slug")}
+
+
+# ── 스테이지 ───────────────────────────────────────────────────────────────
+@app.get("/api/projects/{pid}/stages")
+def get_stages(pid: int) -> Dict[str, Any]:
+    doc = _find(pid)
+    reg = get_registry()
+    job = reg.latest(pid)
+    return {
+        "project_id": pid,
+        "stages": stage_states(pid, doc["slug"], doc),
+        "job": job.to_dict() if job else None,
+    }
+
+
+@app.get("/api/projects/{pid}/frames")
+def get_frames(pid: int) -> Dict[str, Any]:
+    """S1 결과 + 오버라이드. 프레임 화면(바닥)이 읽는다."""
+    doc = _find(pid)
+
+    data = cached_data(pid, doc["slug"], "s1-frames") or {"items": {}}
+    caps = cached_data(pid, doc["slug"], "s3-caption") or {"items": {}}
+    ov = ws.load_overrides(pid, doc["slug"]).get("items", {})
+
+    out = []
+    for it in doc.get("items", []):
+        iid = it["id"]
+        src = data.get("items", {}).get(iid)
+        if not src:
+            continue
+        cap = (caps.get("items", {}) or {}).get(iid, {})
+        cap_frames = {c.get("id"): c for c in (cap.get("frames") or [])}
+        oframes = (ov.get(iid, {}) or {}).get("frames", {})
+        frames = []
+        for f in src["frames"]:
+            c = dict(cap_frames.get(f["id"], {}))
+            c.update(oframes.get(f["id"], {}))       # 손편집이 마지막에 이긴다
+            frames.append({**f, "caption": c.get("caption"), "alt": c.get("alt"),
+                           "selected": bool(c.get("selected")),
+                           "check_reason": c.get("check_reason")})
+        out.append({
+            "id": iid, "title": it.get("title") or iid,
+            "source_label": src.get("source_label"),
+            "duration_sec": src.get("duration_sec"),
+            "peak_score": src.get("peak_score"),
+            "pick_method": src.get("pick_method"),
+            "frames": frames,
+        })
+    return {"project_id": pid, "items": out, "has_captions": bool(caps.get("items"))}
+
+
+@app.get("/api/projects/{pid}/deck")
+def get_deck(pid: int) -> Dict[str, Any]:
+    """세로 편집표가 읽는 것 — 레인 + 슬라이드(연속번호) + 손편집 병합.
+
+    S2b 가 뼈대를 만들고, 하위 스테이지가 레인별로 채운 것을 번호로 다시 모은다.
+    (팬아웃 → 팬인. 아직 안 돈 스테이지의 칸은 비어 있다.)
+    """
+    doc = _find(pid)
+    slug = doc["slug"]
+    outline = cached_data(pid, slug, "s2b-outline") or {}
+    if not outline:
+        return {"project_id": pid, "ready": False, "sections": [], "slides": []}
+
+    frames = (cached_data(pid, slug, "s1-frames") or {}).get("items", {})
+    caps = (cached_data(pid, slug, "s3-caption") or {}).get("items", {})
+    script = (cached_data(pid, slug, "s6-script") or {}).get("slides", {})
+    copy = (cached_data(pid, slug, "s7-copy") or {}).get("slides", {})
+    audio = (cached_data(pid, slug, "s11-audio") or {}).get("slides", {})
+    ov_slides = ws.load_overrides(pid, slug).get("slides", {})
+
+    titles = {it["id"]: it.get("title") for it in doc.get("items", [])}
+    out: List[Dict[str, Any]] = []
+    for sl in outline.get("slides", []):
+        no = str(sl["no"])
+        s = dict(sl)
+        vid = sl.get("video_id")
+        if vid:
+            f = frames.get(vid, {})
+            s["video_title"] = titles.get(vid)
+            s["video_duration"] = f.get("duration_sec")
+            # ✓ 로 고른 프레임만 후보로 올린다 — 한 줄 = 한 장 = 미디어 하나
+            picked = [c for c in (caps.get(vid, {}).get("frames") or [])
+                      if c.get("selected")]
+            s["frame_candidates"] = [c["id"] for c in picked]
+        cp = copy.get(no) or {}
+        if cp.get("title"):
+            s["title"], s["note"] = cp["title"], cp.get("body") or ""
+        # 문구 단계가 돌았는지 — "누가 쓴 글인가" 를 구별하는 데만 쓴다
+        s["has_copy"] = bool(cp.get("title"))
+        s.setdefault("approve", {})
+        # 뺀 장도 목록에는 남긴다 — 되돌릴 수 있어야 하므로 숨기지 않고 표시만 한다
+        s["drop"] = bool((ov_slides.get(no) or {}).get("drop"))
+        sc = script.get(no) or {}
+        s["narration"] = {"text": sc.get("narration_text"),
+                          "srt_text": sc.get("srt_text"),
+                          "est_sec": sc.get("narration_seconds"),
+                          "over_sec": sc.get("over_sec")}
+        au = audio.get(no) or {}
+        s["audio"] = {"source": au.get("source"), "sec": au.get("duration_sec"),
+                      "file": au.get("file")}
+        # 손편집이 마지막에 이긴다
+        for k, v in (ov_slides.get(no) or {}).items():
+            if isinstance(v, dict) and isinstance(s.get(k), dict):
+                s[k] = {**s[k], **v}
+            else:
+                s[k] = v
+        # ★ 화면에 실제로 박히는 본문. **손편집 뒤에** 정한다 — 문구 단계가 낸 것도,
+        #   구조 설계의 메모도, 사람이 고쳐 쓴 것도 결국 여기로 모인다. 앞에서
+        #   정하면 사람이 써 넣은 글이 초안 화면에서 통째로 사라진다.
+        s["body"] = (s.get("note") or "").strip()
+        # 원고 장의 줄 등장 시각 — 조립(s8)과 **같은 함수**로 확정한다. 두 곳이 각자
+        # 계산하면 수정 화면에 적힌 시각과 발표에서 뜨는 시각이 갈린다.
+        # ★ 조각 HTML 자체는 여기 싣지 않는다 — 이 응답은 화면이 목록을 그릴 때마다
+        #   오가는 것이라, 장마다 5~20KB 를 붙이면 목록 한 번에 수 MB 가 된다.
+        #   수정 화면은 미리 뽑아 둔 `html_text`(줄 앞머리)로 충분하다.
+        htmldoc.resolve(s)
+        out.append(s)
+
+    return {
+        "project_id": pid, "ready": True,
+        "deck_title": outline.get("deck_title"),
+        "deck_subtitle": outline.get("deck_subtitle"),
+        "sections": outline.get("sections", []),
+        "slides": out,
+        "tone": (cached_data(pid, slug, "s7-copy") or {}).get("tone"),
+        "target_min": ws.load_overrides(pid, slug).get("target_min") or 0,
+        "filled": {"caption": bool(caps), "script": bool(script),
+                   "audio": bool(audio), "copy": bool(copy)},
+    }
+
+
+@app.get("/preview/{pid}")
+def preview(pid: int, n: int | None = None):
+    """HTML 슬라이드 미리보기 — **미완성 상태에서도 렌더된다.**
+
+    음성·자막·이미지가 아직 없어도 제목과 노트만으로 면이 나와야 한다.
+    텍스트 연계가 어울리는지는 실제 슬라이드를 봐야 판단되기 때문이다.
+    파일을 만들지 않고 현재 캐시로 즉석에서 그린다(최종 빌드는 S9 가 따로).
+    """
+    from fastapi.responses import HTMLResponse
+
+    from pipeline.s8_assemble import compose
+    from render.slides import PreviewResolver, render_deck
+
+    doc = _find(pid)
+    try:
+        # ★ 최종 빌드(S9)와 **같은 조립 함수**를 쓴다. 둘이 갈라지면
+        #   "여기서 OK 한 면" 과 "나가는 면" 이 달라진다.
+        deck, _warn = compose(pid, doc["slug"], doc)
+    except RuntimeError as e:
+        return HTMLResponse(
+            "<meta charset='utf-8'><body style=\"font-family:system-ui;padding:40px\">"
+            f"<h2>아직 덱 구조가 없습니다</h2><p>{e}</p></body>", status_code=200)
+    # ★ `?n=` 이 붙으면 **한 장만 보는 자리**(편집 화면의 iframe)다.
+    #   시작 문을 그리지 않는다 — 거기서는 소리를 낼 일이 없고 문이 면을 가린다.
+    # 배경음악은 굽기 전에도 들려야 고를 수 있다. 한 장만 보는 자리(`?n=`)는 제외 —
+    # render_deck 이 one=True 면 알아서 뺀다.
+    res = PreviewResolver(pid)
+    cfg = doc.get("bgm") or {}
+    rel = str(cfg.get("file") or "")
+    bgm = res.asset(rel) if rel and (
+        ws.project_dir(pid, doc["slug"], create=False) / rel).is_file() else ""
+    html = render_deck(deck, res,
+                       title=(deck.get("project") or {}).get("title") or "",
+                       one=n is not None, bgm=bgm,
+                       bgm_vol=float(cfg.get("volume") or BGM_VOL),
+                       bgm_duck=float(cfg.get("duck") or BGM_DUCK))
+    return HTMLResponse(html, headers={"Cache-Control": "no-store"})
+
+
+@app.get("/print/{pid}")
+def print_script(pid: int):
+    """대본 인쇄본 — **SME에게 보낼 자료.** 장마다 [화면 | 읽는 말]을 표로 훑는다.
+
+    Ctrl+P 로 PDF 저장하면 그대로 검토용 자료가 된다. /preview 와 같은 조립
+    함수를 쓴다 — 화면에서 보는 장 번호·제목과 인쇄본이 갈라지면 검토가 엇갈린다.
+    """
+    from fastapi.responses import HTMLResponse
+
+    from pipeline.s8_assemble import compose
+    from render.print import render_print
+
+    doc = _find(pid)
+    try:
+        deck, _warn = compose(pid, doc["slug"], doc)
+    except RuntimeError as e:
+        return HTMLResponse(
+            "<meta charset='utf-8'><body style=\"font-family:system-ui;padding:40px\">"
+            f"<h2>아직 덱 구조가 없습니다</h2><p>{e}</p></body>", status_code=200)
+    html = render_print(deck, doc.get("narration"))
+    return HTMLResponse(html, headers={"Cache-Control": "no-store"})
+
+
+class BriefIn(BaseModel):
+    """설문 답 — **질문이 고정이 아니므로 답도 자유형이다.**
+
+    S0a 가 레포를 읽고 질문을 만들기 때문에 키가 프로젝트마다 다르다. 넷
+    (`audience`·`goal`·`target_min`·`slide_tone`)만 뒤 단계가 이름으로 읽고,
+    나머지는 기획서 브리프에 그대로 실려 간다.
+    """
+    answers: Dict[str, Any]
+
+
+# 뒤 단계가 이름으로 읽는 키 — 프로젝트 최상위로 올린다
+PROMOTED = {"audience", "goal", "target_min", "slide_tone"}
+
+
+@app.get("/api/projects/{pid}/ask")
+def get_ask(pid: int) -> Dict[str, Any]:
+    doc = _find(pid)
+    d = cached_data(pid, doc["slug"], "s0a-ask") or {}
+    return {"project_id": pid, "questions": d.get("questions") or [],
+            "answers": doc.get("answers") or {}}
+
+
+@app.post("/api/projects/{pid}/brief")
+def post_brief(pid: int, body: BriefIn) -> Dict[str, Any]:
+    doc = _find(pid)
+    ans = {str(k): v for k, v in (body.answers or {}).items()
+           if v not in (None, "")}
+    doc["answers"] = ans
+    for k in PROMOTED & set(ans):
+        v = ans[k]
+        doc[k] = int(re.sub(r"\D", "", str(v)) or 0) if k == "target_min" else v
+    ws.save_project(pid, doc["slug"], doc)
+    return {"ok": True, "answers": ans}
+
+
+# ── 목차 확인 ──────────────────────────────────────────────────────────────
+#
+# ★ **사람이 목차를 보고 확정한 다음에 아래로 내려간다.**
+#
+# 구조 설계가 짠 것을 그대로 믿고 문구·판단·대본을 만들면, 마음에 안 드는
+# 목차 위에 비싼 단계들이 쌓인다. 목차는 지금 고치면 공짜고, 나중에 고치면
+# 그 뒤를 전부 다시 돌려야 한다. 그래서 여기 문을 하나 둔다.
+#
+# 확정본은 **구조 설계 캐시를 직접 덮어쓴다** — 오버라이드가 아니다.
+# 뒤 단계(판단·문구·대본)가 읽는 것이 그 캐시라서, 오버라이드에 적어 두면
+# 사람이 고친 목차를 못 보고 원래 것으로 글을 쓴다.
+@app.get("/api/projects/{pid}/outline")
+def get_outline(pid: int) -> Dict[str, Any]:
+    doc = _find(pid)
+    d = cached_data(pid, doc["slug"], "s2b-outline") or {}
+    return {"ready": bool(d.get("slides")),
+            "deck_title": d.get("deck_title", ""),
+            "sections": d.get("sections") or [],
+            "slides": d.get("slides") or [],
+            "dropped": d.get("dropped") or [],
+            "budget": d.get("budget") or 0,
+            "confirmed_at": doc.get("outline_confirmed_at") or ""}
+
+
+class OutlineSlide(BaseModel):
+    no: int = 0                 # 0 = 새로 끼운 장 (원본이 없다)
+    section: str = ""
+    kind: str = "note"
+    title: str = ""
+    note: str = ""
+    media_kind: str = "text"
+    video_id: Optional[str] = None
+    evidence_hint: str = ""
+
+
+class OutlineIn(BaseModel):
+    slides: List[OutlineSlide]
+
+
+@app.post("/api/projects/{pid}/outline")
+def post_outline(pid: int, body: OutlineIn) -> Dict[str, Any]:
+    doc = _find(pid)
+    slug = doc["slug"]
+    env = read_cache(pid, slug, "s2b-outline")
+    if not env or not (env.get("data") or {}).get("slides"):
+        raise HTTPException(status_code=400, detail="구조 설계를 먼저 돌리세요")
+    data = dict(env["data"])
+
+    # 1부터 다시 매긴다. 옛 번호 → 새 번호를 기억해 둔다.
+    remap: Dict[str, str] = {}
+    slides: List[Dict[str, Any]] = []
+    for i, s in enumerate(body.slides, 1):
+        d = s.model_dump()
+        if d["no"]:
+            remap[str(d["no"])] = str(i)
+        d["no"] = i
+        slides.append(d)
+    data["slides"] = slides
+
+    # 장이 하나도 안 남은 섹션은 목차에서 사라진다
+    secs = []
+    for sec in data.get("sections") or []:
+        nos = [s["no"] for s in slides if s["section"] == sec.get("id")]
+        if nos:
+            secs.append({**sec, "slide_nos": nos})
+    data["sections"] = secs
+
+    # ★ 손편집을 같이 옮긴다. 번호가 밀렸는데 안 옮기면 **엉뚱한 장이 고쳐진다** —
+    #   이 앱에서 이미 한 번 겪은 사고라, 번호를 건드리는 곳마다 같이 처리한다.
+    ov = ws.load_overrides(pid, slug)
+    if ov.get("slides"):
+        ov["slides"] = {remap[k]: v for k, v in ov["slides"].items() if k in remap}
+        ws.save_overrides(pid, slug, ov)
+
+    write_cache(pid, slug, "s2b-outline",
+                input_hash=env.get("input_hash", ""), data=data,
+                code_version=int(env.get("code_version") or 1),
+                model=env.get("model", ""), cost_usd=float(env.get("cost_usd") or 0),
+                status=env.get("status", "ok"), warnings=env.get("warnings") or [])
+
+    doc["outline_confirmed_at"] = datetime.now().isoformat(timespec="seconds")
+    doc["overrides_rev"] = int(doc.get("overrides_rev") or 0) + 1
+    ws.save_project(pid, slug, doc)
+    return {"ok": True, "slides": len(slides), "sections": len(secs)}
+
+
+class OutlineImport(BaseModel):
+    """목차 JSON 통째로. 밖에서 만들어 온 것을 그대로 받는다."""
+    deck_title: str = ""
+    deck_subtitle: str = ""
+    sections: List[Dict[str, Any]] = []
+    slides: List[Dict[str, Any]] = []
+    dropped: List[str] = []
+
+
+@app.post("/api/projects/{pid}/outline/import")
+def import_outline(pid: int, body: OutlineImport) -> Dict[str, Any]:
+    """★ 목차를 **밖에서 만들어 와 넣는다.**
+
+    구조 설계를 다시 돌리는 것($1 남짓)과 달리 공짜고, 무엇보다 사람이 손으로
+    짠 목차를 그대로 쓸 수 있다. 내보내기 → 편집기에서 고치기 → 불러오기.
+
+    거부하지 않고 **수리한다.** 밖에서 온 JSON 은 어디가 빠져 있을지 모른다 —
+    빠진 칸은 기본값으로 채우고 번호는 1부터 다시 매긴다.
+    """
+    doc = _find(pid)
+    slug = doc["slug"]
+    if not body.slides:
+        raise HTTPException(status_code=400, detail="slides 가 비어 있습니다")
+
+    # ★ 목록을 여기 적지 않는다 — core/manuscript.py 가 유일한 출처다. 예전엔 여기
+    #   따로 적혀 있어서, 종류를 늘려도 이 문을 지나가는 순간 모르는 값이 "text" 로
+    #   깎였다(목차를 한 번 저장하면 html 장이 전부 글자 장이 되는 사고).
+    kinds = set(ms.MEDIA_KINDS)
+    slides: List[Dict[str, Any]] = []
+    for i, s in enumerate(body.slides, 1):
+        title = str(s.get("title") or "").strip()
+        if not title:
+            raise HTTPException(status_code=400,
+                                detail=f"{i}번째 장에 title 이 없습니다")
+        mk = str(s.get("media_kind") or "text")
+        slides.append({
+            "no": i,
+            "section": str(s.get("section") or ""),
+            "kind": str(s.get("kind") or "note"),
+            "title": title,
+            "note": str(s.get("note") or ""),
+            "media_kind": mk if mk in kinds else "text",
+            "video_id": s.get("video_id") or None,
+            "evidence_hint": str(s.get("evidence_hint") or ""),
+        })
+
+    # 섹션은 준 것을 쓰되, 장이 가리키는데 없는 섹션은 만들어 준다
+    secs = [{"id": str(x.get("id") or ""), "title": str(x.get("title") or ""),
+             "kind": str(x.get("kind") or "text"),
+             "summary": str(x.get("summary") or "")}
+            for x in (body.sections or []) if x.get("id")]
+    have = {x["id"] for x in secs}
+    for s in slides:
+        if s["section"] and s["section"] not in have:
+            have.add(s["section"])
+            secs.append({"id": s["section"], "title": s["section"],
+                         "kind": "text", "summary": ""})
+    for sec in secs:
+        sec["slide_nos"] = [s["no"] for s in slides if s["section"] == sec["id"]]
+    secs = [s for s in secs if s["slide_nos"]]
+
+    env = read_cache(pid, slug, "s2b-outline") or {}
+    data = {
+        "deck_title": body.deck_title or (env.get("data") or {}).get("deck_title")
+                      or doc.get("title") or slug,
+        "deck_subtitle": body.deck_subtitle
+                         or (env.get("data") or {}).get("deck_subtitle") or "",
+        "sections": secs, "slides": slides,
+        "budget": len(slides), "dropped": list(body.dropped or []),
+    }
+    stage = STAGES["s2b-outline"]
+    write_cache(pid, slug, "s2b-outline",
+                input_hash=stage.input_hash(pid, slug, doc), data=data,
+                code_version=stage.code_version, model="(불러온 JSON)",
+                cost_usd=0.0, status="ok", warnings=[])
+
+    # ★ 손편집 키는 옛 번호를 가리킨다. 통째로 갈아 끼웠으니 다 버린다 —
+    #   남겨 두면 엉뚱한 장에 옛 자막이 붙는다.
+    ws.save_overrides(pid, slug, {})
+    doc["slide_budget"] = len(slides)
+    doc["outline_confirmed_at"] = datetime.now().isoformat(timespec="seconds")
+    doc["overrides_rev"] = int(doc.get("overrides_rev") or 0) + 1
+    ws.save_project(pid, slug, doc)
+    return {"ok": True, "slides": len(slides), "sections": len(secs)}
+
+
+# ── 초안 통째로 (밖에서 다 짜 와서 넣기) ──────────────────────────────────
+#
+# ★ **목차 + 문구 + 대본을 한 파일로.** 이 앱을 안 거치고 다른 데서 전부 짜
+#   온 경우를 위한 문이다. 넣으면 Claude 단계를 하나도 안 돌리고 바로 굽기로
+#   갈 수 있다.
+#
+# 캐시를 직접 쓴다(오버라이드가 아니다). 뒤 단계가 읽는 것이 캐시라서,
+# 오버라이드에 적으면 조립 때만 반영되고 대본은 TTS 로 가지도 못한다.
+class DraftSlide(BaseModel):
+    no: int = 0
+    section: str = ""
+    kind: str = "note"
+    title: str = ""
+    note: str = ""
+    media_kind: str = "text"
+    video_id: Optional[str] = None
+    evidence_hint: str = ""
+    body: str = ""                  # 화면에 박히는 본문
+    narration: Dict[str, Any] = {}  # {srt_text, text} — 자막과 발음
+
+
+class DraftIn(BaseModel):
+    deck_title: str = ""
+    deck_subtitle: str = ""
+    sections: List[Dict[str, Any]] = []
+    slides: List[DraftSlide]
+    dropped: List[str] = []
+    tone: str = ""
+
+
+@app.get("/api/projects/{pid}/draft")
+def get_draft(pid: int) -> Dict[str, Any]:
+    """지금 상태를 통째로. 이대로 내보내 고쳐서 다시 넣는다."""
+    doc = _find(pid)
+    slug = doc["slug"]
+    o = cached_data(pid, slug, "s2b-outline") or {}
+    cp = (cached_data(pid, slug, "s7-copy") or {}).get("slides") or {}
+    sc = (cached_data(pid, slug, "s6-script") or {}).get("slides") or {}
+    ov = (ws.load_overrides(pid, slug).get("slides") or {})
+
+    slides = []
+    for s in (o.get("slides") or []):
+        k = str(s["no"])
+        if (ov.get(k) or {}).get("drop"):
+            continue
+        c, n = cp.get(k) or {}, sc.get(k) or {}
+        slides.append({
+            "no": s["no"], "section": s.get("section", ""),
+            "kind": s.get("kind", "note"), "title": c.get("title") or s.get("title", ""),
+            "note": s.get("note", ""), "media_kind": s.get("media_kind", "text"),
+            "video_id": s.get("video_id"), "evidence_hint": s.get("evidence_hint", ""),
+            "body": c.get("body") or "",
+            "narration": {"srt_text": n.get("srt_text") or "",
+                          "text": n.get("narration_text") or n.get("srt_text") or ""},
+        })
+    # ★ 설명을 맨 위에 얹어서 내보낸다 — 파일을 받는 쪽은 이 레포가 없다
+    return ms.wrap({
+            "deck_title": o.get("deck_title", ""),
+            "deck_subtitle": o.get("deck_subtitle", ""),
+            "sections": [{"id": x.get("id"), "title": x.get("title"),
+                          "kind": x.get("kind", "text"), "summary": x.get("summary", "")}
+                         for x in (o.get("sections") or [])],
+            "slides": slides, "dropped": o.get("dropped") or [],
+            "tone": doc.get("slide_tone") or ""})
+
+
+@app.post("/api/projects/{pid}/draft/import")
+def import_draft(pid: int, body: DraftIn) -> Dict[str, Any]:
+    """목차·문구·대본을 한 번에 갈아 끼운다. **거부하지 않고 수리한다.**"""
+    doc = _find(pid)
+    slug = doc["slug"]
+    if not body.slides:
+        raise HTTPException(status_code=400, detail="slides 가 비어 있습니다")
+
+    kinds = set(ms.MEDIA_KINDS)      # 유일한 출처 — 위 outline/import 와 같은 이유
+    cps = float((config.load().get("narration") or {}).get("chars_per_sec") or 5.7)
+    cps = float((doc.get("narration") or {}).get("chars_per_sec") or cps)
+
+    slides, copy, script = [], {}, {}
+    for i, s in enumerate(body.slides, 1):
+        title = (s.title or "").strip()
+        if not title:
+            raise HTTPException(status_code=400, detail=f"{i}번째 장에 title 이 없습니다")
+        mk = s.media_kind if s.media_kind in kinds else "text"
+        slides.append({"no": i, "section": (s.section or "").strip(),
+                       "kind": s.kind or "note", "title": title,
+                       "note": s.note or "", "media_kind": mk,
+                       "video_id": s.video_id or None,
+                       "evidence_hint": s.evidence_hint or ""})
+        if (s.body or "").strip() or title:
+            copy[str(i)] = {"title": title, "body": (s.body or "").strip(),
+                            "tone": body.tone or doc.get("slide_tone") or "pitch"}
+        nar = s.narration or {}
+        srt = str(nar.get("srt_text") or nar.get("text") or "").strip()
+        if srt:
+            spoken = str(nar.get("text") or srt).strip()
+            # 길이는 글자수에서 추정한다. 합성이 끝나면 실측으로 다시 잡힌다.
+            n_ch = len(re.sub(r"\s", "", spoken))
+            script[str(i)] = {"srt_text": srt, "narration_text": spoken,
+                              "narration_seconds": round(n_ch / max(cps, 0.1), 1),
+                              "budget_sec": 0.0}
+
+    secs = [{"id": str(x.get("id") or ""), "title": str(x.get("title") or ""),
+             "kind": str(x.get("kind") or "text"),
+             "summary": str(x.get("summary") or "")}
+            for x in (body.sections or []) if x.get("id")]
+    have = {x["id"] for x in secs}
+    for s in slides:
+        if s["section"] and s["section"] not in have:
+            have.add(s["section"])
+            secs.append({"id": s["section"], "title": s["section"],
+                         "kind": "text", "summary": ""})
+    for sec in secs:
+        sec["slide_nos"] = [s["no"] for s in slides if s["section"] == sec["id"]]
+    secs = [s for s in secs if s["slide_nos"]]
+
+    def put(stage_key: str, data: Dict[str, Any]) -> None:
+        st = STAGES[stage_key]
+        write_cache(pid, slug, stage_key,
+                    input_hash=st.input_hash(pid, slug, doc), data=data,
+                    code_version=st.code_version, model="(불러온 JSON)",
+                    cost_usd=0.0, status="ok", warnings=[])
+
+    old = cached_data(pid, slug, "s2b-outline") or {}
+    put("s2b-outline", {
+        "deck_title": body.deck_title or old.get("deck_title") or doc.get("title") or slug,
+        "deck_subtitle": body.deck_subtitle or old.get("deck_subtitle") or "",
+        "sections": secs, "slides": slides,
+        "budget": len(slides), "dropped": list(body.dropped or [])})
+    if copy:
+        put("s7-copy", {"slides": copy, "tone": body.tone or doc.get("slide_tone") or "pitch"})
+    if script:
+        put("s6-script", {"slides": script,
+                          "total_sec": round(sum(v["narration_seconds"]
+                                                 for v in script.values()), 1),
+                          "chars_per_sec": cps})
+
+    # 옛 손편집은 옛 번호를 가리킨다 — 통째로 갈았으니 버린다
+    ws.save_overrides(pid, slug, {})
+    doc["slide_budget"] = len(slides)
+    doc["outline_confirmed_at"] = datetime.now().isoformat(timespec="seconds")
+    doc["overrides_rev"] = int(doc.get("overrides_rev") or 0) + 1
+    ws.save_project(pid, slug, doc)
+    return {"ok": True, "slides": len(slides), "sections": len(secs),
+            "copy": len(copy), "script": len(script)}
+
+
+class BudgetIn(BaseModel):
+    slide_budget: int
+
+
+@app.post("/api/projects/{pid}/budget")
+def post_budget(pid: int, body: BudgetIn) -> Dict[str, Any]:
+    """장 예산. ★ 이 값을 바꾸면 구조 설계가 stale 이 되고, 눌러서 다시 짜야 한다.
+
+    자동으로 다시 돌리지 않는다 — Claude 단계는 명시적 클릭에만 돈을 쓴다.
+    """
+    from pipeline.s2b_outline import slide_budget
+
+    doc = _find(pid)
+    doc["slide_budget"] = max(8, min(60, int(body.slide_budget)))
+    ws.save_project(pid, doc["slug"], doc)
+    return {"ok": True, "slide_budget": slide_budget(doc)}
+
+
+class VersionIn(BaseModel):
+    name: str
+    note: str = ""
+
+
+@app.get("/api/projects/{pid}/versions")
+def get_versions(pid: int) -> Dict[str, Any]:
+    doc = _find(pid)
+    return versions.describe(pid, doc["slug"])
+
+
+@app.post("/api/projects/{pid}/versions")
+def save_version(pid: int, body: VersionIn) -> Dict[str, Any]:
+    """지금 상태를 한 벌 뜬다 — 캐시 + 손편집. 원본(영상·레포)은 복사하지 않는다."""
+    doc = _find(pid)
+    return versions.save(pid, doc["slug"], body.name, body.note)
+
+
+@app.post("/api/projects/{pid}/versions/{name}/restore")
+def restore_version(pid: int, name: str) -> Dict[str, Any]:
+    doc = _find(pid)
+    if get_registry().latest(pid) and (get_registry().latest(pid).running):
+        raise HTTPException(status_code=409, detail="실행 중에는 되돌릴 수 없습니다")
+    try:
+        return versions.restore(pid, doc["slug"], name)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.delete("/api/projects/{pid}/versions/{name}")
+def delete_version(pid: int, name: str) -> Dict[str, Any]:
+    doc = _find(pid)
+    versions.remove(pid, doc["slug"], name)
+    return {"ok": True}
+
+
+@app.get("/api/projects/{pid}/dist")
+def get_dist(pid: int) -> Dict[str, Any]:
+    """완성본에 무엇이 나왔나.
+
+    ★ 답해야 하는 질문은 하나다 — **무엇을 올리나.**
+      그래서 맨 위에 "이 폴더를 통째로 올리세요" 가 오고, 나머지는 곁다리다.
+    """
+    doc = _find(pid)
+    step = ws.STEPS["dist"][0]
+    d = ws.project_dir(pid, doc["slug"], create=False) / step
+    a = ws.ascii_slug(doc["slug"])
+    web = d / a
+
+    def mb(p: Path) -> int:
+        return sum(f.stat().st_size for f in p.rglob("*") if f.is_file())
+
+    out: Dict[str, Any] = {"dir": str(d), "web": None, "extras": []}
+    if web.is_dir():
+        out["web"] = {
+            "name": a,
+            "path": str(web),
+            "bytes": mb(web),
+            "files": sum(1 for f in web.rglob("*") if f.is_file()),
+            # 앱 안에서 열어 보는 주소. 옆의 assets/ 가 상대 경로로 그대로 붙는다.
+            "url": f"/api/projects/{pid}/file/{step}/{a}/index.html",
+        }
+    for name, why in ((f"{a}.html", "파일 한 장 — 메일·USB 로 보내면 그대로 열립니다"),
+                      (f"{a}.mp4", "슬라이드+내레이션을 이어 붙인 영상 — 재생만 하면 됩니다"),
+                      ("올리는법.txt", "무엇을 올리고 무엇을 안 올리는지")):
+        f = d / name
+        if f.is_file():
+            out["extras"].append({
+                "name": name, "bytes": f.stat().st_size, "why": why,
+                "url": f"/api/projects/{pid}/file/{step}/{name}"})
+    cue = d / "cue"
+    if cue.is_dir():
+        n = sum(1 for f in cue.iterdir() if f.is_file())
+        out["extras"].append({"name": "cue/", "bytes": mb(cue), "count": n,
+                              "why": f"자막·큐시트 {n}개 — 영상팀용. 웹에는 안 올립니다",
+                              "url": ""})
+    return out
+
+
+@app.post("/api/projects/{pid}/reveal")
+def reveal(pid: int) -> Dict[str, Any]:
+    """완성 폴더를 탐색기에서 연다.
+
+    ★ 로컬 앱이라서 할 수 있는 일이다. 산출물은 앱 밖에 있고 경로도 길어서,
+      "어디에 나왔나" 를 글로 알려 주면 사람이 복사해 붙여넣어야 한다.
+
+    ★ 여는 곳은 **완성 폴더 하나로 고정**한다. 어디를 열지 화면이 정해서
+      보내게 두면(예전엔 rel 을 받았다) 경로 검사·탈출 방어가 딸려 오고,
+      실제로 필요한 곳은 여기 하나뿐이다.
+    """
+    doc = _find(pid)
+    d = ws.project_dir(pid, doc["slug"], create=False) / ws.STEPS["dist"][0]
+    if not d.is_dir():
+        raise HTTPException(status_code=404, detail="아직 완성본이 없습니다")
+    try:
+        if sys.platform == "win32":
+            os.startfile(str(d))                       # noqa: S606
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", str(d)])
+        else:
+            subprocess.Popen(["xdg-open", str(d)])
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"열지 못했습니다: {e}")
+    return {"ok": True, "dir": str(d)}
+
+
+@app.get("/api/projects/{pid}/file/{rel:path}")
+def get_file(pid: int, rel: str):
+    """프로젝트 폴더 안의 산출물 서빙(프레임·그림·음성·자막).
+
+    ★ 경로 탈출 차단이 이 함수의 존재 이유다. `rel` 은 덱 데이터에서 오고,
+      덱 데이터에는 Claude 가 쓴 값이 섞인다. 절대경로·`..` 을 모두 거부하고
+      resolve 후 프로젝트 폴더 안인지 다시 확인한다.
+    """
+    doc = _find(pid)
+    root = ws.project_dir(pid, doc["slug"], create=False).resolve()
+    if ".." in rel or rel.startswith(("/", "\\")) or ":" in rel:
+        raise HTTPException(status_code=400, detail="잘못된 경로")
+    p = (root / rel).resolve()
+    try:
+        p.relative_to(root)
+    except ValueError:
+        raise HTTPException(status_code=403, detail="폴더 밖")
+    if not p.is_file():
+        raise HTTPException(status_code=404, detail="없는 파일")
+    from render.resolvers import MIME
+    return FileResponse(str(p), media_type=MIME.get(p.suffix.lower(),
+                                                    "application/octet-stream"),
+                        headers={"Cache-Control": "public, max-age=600"})
+
+
+@app.get("/api/projects/{pid}/img/{step}/{name}")
+def get_image(pid: int, step: str, name: str):
+    """추출된 프레임 서빙. **경로 탈출을 막는다** — name 은 모델/사용자 입력일 수 있다."""
+    doc = _find(pid)
+    if step not in ws.STEPS:
+        raise HTTPException(status_code=404, detail="모르는 단계")
+    base = ws.step_dir(pid, doc["slug"], step, create=False)
+    p = ws.safe_child(base, name)
+    if p is None:
+        raise HTTPException(status_code=404, detail="없는 파일")
+    return FileResponse(str(p), media_type="image/webp",
+                        headers={"Cache-Control": "public, max-age=3600"})
+
+
+@app.get("/api/projects/{pid}/video/{iid}")
+def get_video(pid: int, iid: str):
+    """원본 영상 미리보기.
+
+    ★ 원본은 **복사하지 않는다.** `_video-context/` 에 그대로 두고 여기서 읽는다.
+      다만 mkv 는 브라우저가 재생하지 못하므로 mp4 로 **리먹스**한다 —
+      `-c copy` 라 재인코딩이 아니고 무손실이며 몇 초면 끝난다.
+      결과는 07_음성 옆이 아니라 프레임 단계 아래 `_preview/` 에 캐시한다.
+
+    프레임을 고를 때 "이 순간이 맞나" 를 확인하려면 영상을 그 지점부터 볼 수
+    있어야 한다. 그게 없으면 스틸만 보고 ✓ 를 찍게 된다.
+    """
+    doc = _find(pid)
+    item = next((i for i in doc.get("items", []) if i["id"] == iid), None)
+    if item is None:
+        raise HTTPException(status_code=404, detail="없는 항목")
+
+    src = Path(doc["video_dir"]) / item["file"]
+    if not src.is_file():
+        # NFC/NFD 불일치 대비 — macOS 에서 온 파일명은 == 이 실패한다
+        from pipeline.s1_frames import _resolve
+
+        src = _resolve(Path(doc["video_dir"]), item["file"])
+        if src is None:
+            raise HTTPException(status_code=404, detail=f"영상 파일이 없습니다: {item['file']}")
+
+    prev = ws.sub_dir(pid, doc["slug"], "frames", "_preview") / f"{iid}.mp4"
+    if not (prev.is_file() and prev.stat().st_size > 1000):
+        from pipeline.s1_frames import _run
+
+        r = _run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+                  "-i", str(src), "-map", "0:v:0", "-map", "0:a:0?",
+                  "-c", "copy", "-movflags", "+faststart", str(prev)], timeout=600)
+        if r.returncode != 0 or not prev.is_file():
+            # 코덱이 mp4 컨테이너에 안 들어가는 경우 — 그때만 재인코딩
+            r = _run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+                      "-i", str(src), "-vf", "scale=1280:-2:flags=lanczos", "-r", "30",
+                      "-c:v", "libx264", "-crf", "26", "-preset", "veryfast",
+                      "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "96k",
+                      "-movflags", "+faststart", str(prev)], timeout=1800)
+            if r.returncode != 0:
+                raise HTTPException(status_code=500,
+                                    detail=f"영상 변환 실패: {(r.stderr or '')[-200:]}")
+
+    # FileResponse 가 Range(206) 를 처리한다 — seek 이 되려면 필요하다.
+    return FileResponse(str(prev), media_type="video/mp4",
+                        headers={"Accept-Ranges": "bytes",
+                                 "Cache-Control": "public, max-age=3600"})
+
+
+class OverrideIn(BaseModel):
+    patch: Dict[str, Any]
+
+
+@app.post("/api/projects/{pid}/overrides")
+def post_overrides(pid: int, body: OverrideIn) -> Dict[str, Any]:
+    """손편집 저장(sparse deep-merge). 스테이지를 다시 돌려도 이건 살아남는다."""
+    doc = _find(pid)
+    cur = ws.load_overrides(pid, doc["slug"])
+
+    def merge(a: Dict[str, Any], b: Dict[str, Any]) -> Dict[str, Any]:
+        out = dict(a)
+        for k, v in (b or {}).items():
+            out[k] = merge(out.get(k, {}), v) if isinstance(v, dict) and isinstance(out.get(k), dict) else v
+        return out
+
+    ws.save_overrides(pid, doc["slug"], merge(cur, body.patch))
+
+    # ★ 손편집도 **조립을 낡게 만든다.** 오버라이드 파일은 스테이지 해시에 안
+    #   들어가서, 예전엔 문구를 고쳐도 완성본이 "최신" 으로 남았다 — 그러면
+    #   고쳐 놓고 안 구운 채로 발표하러 간다. 세는 값 하나를 프로젝트에 두고
+    #   s8 이 그걸 읽게 해서, 고치는 순간 "다시 구우세요" 가 뜨게 한다.
+    doc["overrides_rev"] = int(doc.get("overrides_rev") or 0) + 1
+
+    # ★ 대본을 고친 것만 따로 센다. 음성 합성은 22장을 다시 읽는 일이라, 그림 한 장
+    #   넣었다고 같이 돌면 몇 분이 그냥 나간다. `overrides_rev` 는 조립(s8)이 읽고,
+    #   이 값은 음성·자막(s10·s11)이 읽는다 — 낡음의 이유가 서로 다르다.
+    touched_narration = any(
+        isinstance(v, dict) and "narration" in v
+        for v in ((body.patch or {}).get("slides") or {}).values())
+    if touched_narration:
+        doc["narration_rev"] = int(doc.get("narration_rev") or 0) + 1
+
+    ws.save_project(pid, doc["slug"], doc)
+    return {"ok": True, "overrides_rev": doc["overrides_rev"],
+            "narration_rev": doc.get("narration_rev") or 0}
+
+
+@app.post("/api/projects/{pid}/stages/{stage}/run")
+def run_stage(pid: int, stage: str, force: bool = False) -> Dict[str, Any]:
+    doc = _find(pid)
+    spec = STAGES.get(stage)
+    if spec is None:
+        raise HTTPException(status_code=404, detail=f"모르는 스테이지: {stage}")
+    if spec.run is None:
+        raise HTTPException(status_code=501, detail=f"{spec.label} 은 아직 구현 전입니다")
+
+    reg = get_registry()
+    try:
+        job = reg.start(
+            project_id=pid, stage=stage, label=spec.label,
+            work=lambda j: spec.run(j, pid, doc["slug"], doc, force=force),
+        )
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    return job.to_dict()
+
+
+# ── 잡 ─────────────────────────────────────────────────────────────────────
+@app.get("/api/jobs/running")
+def job_running() -> Dict[str, Any]:
+    j = get_registry().any_running()
+    return j.to_dict() if j else {"running": False}
+
+
+@app.get("/api/jobs/{job_id}")
+def job_get(job_id: str) -> Dict[str, Any]:
+    j = get_registry().get(job_id)
+    if j is None:
+        raise HTTPException(status_code=404, detail="없는 잡입니다")
+    return j.to_dict()
+
+
+@app.post("/api/jobs/{job_id}/cancel")
+def job_cancel(job_id: str) -> Dict[str, Any]:
+    j = get_registry().get(job_id)
+    if j is None:
+        raise HTTPException(status_code=404, detail="없는 잡입니다")
+    j.cancel()
+    return j.to_dict()
+
+
+# ── 오류 봉투 ──────────────────────────────────────────────────────────────
+@app.exception_handler(Exception)
+def on_error(_req, exc: Exception) -> JSONResponse:
+    return JSONResponse(status_code=500,
+                        content={"detail": f"{type(exc).__name__}: {exc}"})
+
+
+# ── 부팅 ───────────────────────────────────────────────────────────────────
+@app.on_event("startup")
+def _open_browser() -> None:
+    """서버가 실제로 듣기 시작한 뒤에 브라우저를 연다.
+
+    run.bat 에서 `start ""` 로 먼저 열면 부팅(1~3초)을 앞질러
+    ERR_CONNECTION_REFUSED 페이지가 뜬다 — IDA 에서 실제로 겪은 문제.
+    """
+    if os.environ.get("SHOWCASE_OPEN_BROWSER") != "1":
+        return
+    port = config.load()["port"]
+    threading.Timer(0.6, lambda: webbrowser.open(f"http://localhost:{port}")).start()

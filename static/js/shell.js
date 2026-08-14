@@ -539,11 +539,10 @@ function initRail() {
 
   $("#side-user")?.addEventListener("click", () => navigate("/workspace"));
   $("#side-section-more")?.addEventListener("click", () => navigate("/projects"));
-  // 스테이지 화면은 메뉴에서 뺐다 — 이 버튼도 현황판으로 간다
-  $("#btn-next-stage")?.addEventListener("click", () => {
-    if (!state.projectId) { navigate("/start"); return; }
-    navigate("/board");
-  });
+  /* 맨 위 큰 단추 — **새로 시작한다.** 프로젝트가 골라져 있든 말든 같은 곳으로
+     간다. 조건에 따라 다른 데로 보내면 "이걸 누르면 뭐가 되지" 를 매번 생각해야
+     한다 — 큰 단추는 하나만 하는 게 맞다. 무엇이 남았는지는 오른쪽 서랍이 말한다. */
+  $("#btn-new-deck")?.addEventListener("click", () => navigate("/start"));
 
   // 레일 링크 가로채기 — 잠긴 항목은 프로젝트 고르기로 보낸다
   $("#side-nav")?.addEventListener("click", (e) => {

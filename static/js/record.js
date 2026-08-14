@@ -152,7 +152,9 @@ export async function mount(root, ctx) {
      + "다만 탭을 음소거하면(탭 우클릭 → 사이트 음소거) 낼 소리가 없어 안 담깁니다"],
     ["허용을 누르면 슬라이드가 1장부터 자동 재생됩니다",
      "화면은 전체 화면으로 커집니다 — 브라우저 테두리는 안 찍힙니다"],
-    ["끝나면 «멈춤» 을 누르세요", "곧바로 완성본 폴더에 저장하거나 내려받을 수 있습니다"],
+    ["끝나면 알아서 멈춥니다 — 자리를 뜨셔도 됩니다",
+     "마지막 장의 말이 끝나면 음악이 잦아들고, 전체 화면이 풀리고, 녹화가 멎고, "
+     + "완성본 폴더에 저장까지 됩니다. 중간에 끊고 싶으면 Esc 를 누른 뒤 «멈춤»"],
   ]) {
     const li = el("li");
     li.append(el("b", null, t1), el("span", null, t2));
@@ -186,6 +188,24 @@ export async function mount(root, ctx) {
 
   // ── 녹화 ──────────────────────────────────────────────────────────────
   let rec = null, stream = null, chunks = [], t0 = 0, tick = null, ext = "webm";
+  let autoSave = false;      // 발표가 스스로 끝났으면 저장까지 알아서 한다
+
+  /* ★ **끝나면 알아서 끝난다.** 마지막 장의 말이 끝나면 슬라이드 쪽이
+   * `deck-end` 를 보낸다(render/slides.py 의 endDeck). 그러면 여기서 전체
+   * 화면을 풀고, 녹화를 멈추고, 완성본 폴더에 저장까지 한다.
+   * 예전에는 사람이 ① 끝난 걸 알아채고 ② Esc 를 누르고 ③ 멈춤을 누르고
+   * ④ 저장을 눌러야 했다 — 18분을 지켜보고 있어야 한다는 뜻이었다
+   * (2026-08-14: "이거 일일이 기다렸다 하는 건 좀 아닌 듯 · 와서 버튼을 또
+   * 눌러야 되네요"). 자리를 떠도 파일이 나와 있어야 한다. */
+  addEventListener("message", (e) => {
+    if (!e.data || e.data.sa !== "deck-end") return;
+    if (!rec || rec.state === "inactive") return;
+    autoSave = true;
+    note.textContent = "발표가 끝나 저장하는 중…";
+    note.className = "rec-note";
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    rec.stop();
+  });
 
   function setRunning(on) {
     btn.classList.toggle("rec-on", on);
@@ -207,6 +227,13 @@ export async function mount(root, ctx) {
       toast("이 브라우저는 화면 녹화를 지원하지 않습니다 — Chrome 또는 Edge 를 쓰세요", "err");
       return;
     }
+    /* ★ **전체 화면을 먼저 건다.** 공유 창을 띄운 뒤에 걸면 안 된다 —
+     * `requestFullscreen()` 은 사람의 동작 직후에만 허용되는데, 공유 창을
+     * 기다리는 동안(await) 그 권한이 만료된다. 그러면 조용히 실패하고
+     * **앱 화면이 통째로 녹화된다**(2026-08-14 실측: 레일·서랍까지 다 찍혔다).
+     * 누른 직후가 유일하게 확실한 자리다. */
+    try { await stage.requestFullscreen(); } catch { /* 막혀도 녹화는 된다 */ }
+
     try {
       stream = await navigator.mediaDevices.getDisplayMedia({
         video: {frameRate: 30},
@@ -215,7 +242,8 @@ export async function mount(root, ctx) {
         preferCurrentTab: true,
       });
     } catch (e) {
-      // 사용자가 취소한 것은 오류가 아니다
+      // 사용자가 취소한 것은 오류가 아니다. 다만 먼저 건 전체 화면은 되돌린다.
+      if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
       if (e && e.name !== "NotAllowedError") toast("화면을 받지 못했습니다: " + e.message, "err");
       return;
     }
@@ -251,9 +279,6 @@ export async function mount(root, ctx) {
     t.textContent = "0:00";
     tick = setInterval(() => { t.textContent = clock((Date.now() - t0) / 1000); }, 500);
 
-    // 화면을 크게 — 녹화가 이 탭을 받으므로 전체 화면이면 슬라이드만 남는다
-    try { await stage.requestFullscreen(); } catch { /* 막혀 있어도 녹화는 된다 */ }
-
     /* 1장부터 새로 시작하고 자동 재생 문을 연다.
        ★ 같은 서버라(same-origin) iframe 안을 만질 수 있다. 브라우저 자동재생
          정책 때문에 첫 소리에는 사람의 동작이 필요한데, 방금 «녹화 시작» 을
@@ -281,13 +306,21 @@ export async function mount(root, ctx) {
     out.appendChild(el("div", "fm-lb",
       `녹화 ${clock(sec)} · ${(blob.size / 1e6).toFixed(1)}MB · ${ext}`));
 
+    /* ★ 단추는 **하나**다(2026-08-14 지시: "하나만 하고 그 폴더 열기로 하고").
+     * 저장하고 나면 같은 단추가 «폴더 열기» 가 된다 — 다음에 할 일이 그것
+     * 하나뿐이기 때문이다. 「내려받기」는 뺐다: 브라우저 기본 폴더에 떨어뜨리면
+     * 나중에 "그 영상 어디 갔지" 가 되고, 이 앱은 산출물을 한 자리에 모아 왔다. */
     const row = el("div", "imgdrop-bar");
     const save = el("button", "btn primary");
     save.type = "button";
-    save.append(icon("download", 14), el("span", null, "완성본 폴더에 저장"));
-    save.onclick = async () => {
+    const sIcon = icon("download", 14);
+    const sLab = el("span", null, "완성본 폴더에 저장");
+    save.append(sIcon, sLab);
+
+    const doSave = async () => {
+      if (save.disabled) return;
       save.disabled = true;
-      save.lastChild.textContent = "저장 중…";
+      sLab.textContent = "저장 중…";
       try {
         const r = await fetch(
           `/api/projects/${state.projectId}/recording?ext=${ext}`,
@@ -296,26 +329,29 @@ export async function mount(root, ctx) {
         const j = await r.json();
         toast(`${j.name} 저장했습니다`);
         out.appendChild(el("div", "imgdrop-path", j.path));
+        // 같은 단추가 다음 할 일로 바뀐다
+        sLab.textContent = "폴더 열기";
+        sIcon.replaceWith(icon("folder", 14));
+        save.onclick = () =>
+          api(`/api/projects/${state.projectId}/reveal`, {method: "POST"})
+            .catch((e) => toast("폴더를 열지 못했습니다: " + e.message, "err"));
       } catch (e) {
         toast("저장하지 못했습니다: " + e.message, "err");
+        sLab.textContent = "완성본 폴더에 저장";
       } finally {
         save.disabled = false;
-        save.lastChild.textContent = "완성본 폴더에 저장";
       }
     };
+    save.onclick = doSave;
     row.appendChild(save);
-
-    // 브라우저로 내려받기 — 폴더에 저장이 막히는 상황(권한 등)의 뒷문
-    const dl = el("a", "btn");
-    dl.href = URL.createObjectURL(blob);
-    dl.download = `${deck.deck_title || "발표"}.${ext}`;
-    dl.append(icon("download", 14), el("span", null, "내려받기"));
-    row.appendChild(dl);
 
     const play = el("video", "rec-play");
     play.controls = true;
-    play.src = dl.href;
+    play.src = URL.createObjectURL(blob);
     out.append(row, play);
+
+    // 발표가 스스로 끝난 경우엔 저장도 스스로 한다 — 자리를 떠도 파일이 나와 있게
+    if (autoSave) { autoSave = false; doSave(); }
   }
 
   btn.onclick = () => {

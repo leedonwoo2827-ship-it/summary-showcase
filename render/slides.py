@@ -297,9 +297,23 @@ p{margin:0 0 11px;font-size:clamp(14px,1.15vw,17px);color:#4a453f;max-width:62ch
    조그만 둡시다 · 제목의 위치만 옮기면 될 것 같아요"). 본문 상자는 화면 왼쪽
    끝(0)에 그대로 붙어 있고 — 그래야 오른쪽 아바타 칸 232px 이 지켜진다 —
    제목만 위 여백과 같은 값(2vh = 1080 기준 21.6px)만큼 들어온다.
-   본문(원고 HTML)은 자기 여백을 이미 갖고 있어서 건드리지 않는다. */
-.s-shots h2{margin-bottom:6px;padding-left:2vh}
-.s-shots h2::after{margin-top:6px}
+   본문(원고 HTML)은 자기 여백을 이미 갖고 있어서 건드리지 않는다.
+
+   ★ **밑줄을 뺀다**(2026-08-14: "선이 너무 눈에 띄어서 · 제목을 한 포인트
+     키우고 다른 색으로 굵게 하면 선을 지워도 될 것 같습니다").
+     줄이 하는 일은 "여기가 제목이다" 를 말하는 것인데, 제목 자신이 충분히
+     달라 보이면 줄은 같은 말을 두 번 하는 셈이다. 게다가 폭이 52px 로 고정돼
+     있어 제목 길이와 무관하게 늘 같은 자리에서 끊겨 어긋나 보였다.
+     대신 제목을 키우고(34 → 38px) 색을 레인 색으로 바꾸고 더 굵게(700 → 800)
+     한다 — 굵기·자간·색이 함께 달라지면 눈에는 다른 서체처럼 읽힌다.
+     ★ 새 글꼴 파일을 들이지 않는다: 완성본은 파일 한 장으로 나가야 하고,
+       바깥에서 불러오는 것은 따라가지 않는다.
+   ★ 높이는 오히려 는다 — 줄(3px)과 그 위 여백(6px)이 빠지고 제목이 5px
+     커져서, 본문이 쓸 수 있는 세로가 4px 늘어난다. */
+.s-shots h2{margin-bottom:15px;padding-left:2vh;
+  font-size:clamp(24px,2vw,38px);font-weight:800;letter-spacing:-.035em;
+  color:var(--lane)}
+.s-shots h2::after{display:none}
 .s-shots .cols{grid-template-columns:1fr;gap:0}
 .s-shots .m-shots::before{content:none}
 /* ★ 폭을 100%로 꽉 채우지 않는다(2026-08-14 지시) — 캡처 원본이 옆으로
@@ -606,9 +620,44 @@ function holdMs(sec){
   const t=(sec.querySelector('.txt')||{}).textContent||'';
   return Math.max(DEFAULT_HOLD, Math.min(20000, t.replace(/\s/g,'').length*PER_CHAR));
 }
+/* ★ 발표가 **끝나는 자리.** 예전에는 마지막 장에서 armAuto 가 그냥 빠져나가서,
+   아무 일도 일어나지 않았다 — 배경음악은 `loop` 라 영원히 돌고, 녹화하던 사람은
+   끝난 줄 모르고 계속 찍었다(2026-08-14: "렌더링 끝에서 계속 음악 나오는데
+   어떻게 해요?"). 마지막 장의 말이 끝나면 음악을 2.2초에 걸쳐 내리고 세운 뒤,
+   **바깥(녹화 화면)에 끝났다고 알린다** — 그쪽이 스스로 녹화를 멈춘다. */
+/* 마무리 — 말이 끝나면 **음악을 한 번 올렸다가 내린다.** 그냥 뚝 끊으면 끝인지
+   멈춘 건지 알 수 없다. 올라가는 소리가 "이제 끝입니다" 를 말해 주고, 내려가는
+   동안 화면을 잠깐 더 보여 준 뒤 녹화가 멎는다(2026-08-14 지시). */
+const OUTRO_UP=1200, OUTRO_HOLD=2600, OUTRO_DOWN=1800;
+
+function endDeck(){
+  auto=false;
+  clearTimeout(hold); clearTimeout(holdH);
+  document.body.classList.add('ended');
+  paint();
+  // iframe 안에서 돌 때만 의미가 있다. 혼자 열려 있으면 받는 곳이 없을 뿐이다.
+  const done=()=>{ try{ parent.postMessage({sa:'deck-end'},'*'); }catch(e){} };
+  if(bgmEl&&bgmWant){
+    clearTimeout(duckT); ducked=false;          // 말이 끝났으니 덕킹을 푼다
+    bgmFade(Math.min(1,BG.vol*1.8),OUTRO_UP);
+    setTimeout(()=>{
+      bgmFade(0,OUTRO_DOWN);
+      setTimeout(()=>{
+        clearInterval(fade$); bgmEl.pause(); bgmWant=false;
+        if(bgmBtn)bgmBtn.classList.remove('on');
+        done();
+      },OUTRO_DOWN+200);
+    },OUTRO_UP+OUTRO_HOLD);
+  }else{
+    // 음악이 없으면 침묵을 5초나 끌 이유가 없다 — 마지막 화면만 잠깐 보여 준다
+    setTimeout(done,2000);
+  }
+}
+
 function armAuto(sec){
   clearTimeout(hold); clearTimeout(holdH);
-  if(!auto||paused||i>=slides.length-1) return;
+  if(!auto||paused) return;
+  const last=i>=slides.length-1;
   const m=media(sec);
 
   /* ★ **영상과 음성 중 긴 쪽을 기다린다.**
@@ -622,7 +671,10 @@ function armAuto(sec){
   const needA=!!m.a, needV=!!(m.v&&m.v.dataset.end), needH=lastH>0;
   let doneA=!needA, doneV=!needV, doneH=!needH;
   const tick=()=>{ if(auto&&!paused&&doneA&&doneV&&doneH) setTimeout(()=>{
-    if(auto&&!paused) go(i+1); },450); };
+    if(!auto||paused) return;
+    // 마지막 장이면 다음이 없다 — 넘기는 대신 마무리한다
+    if(last) endDeck(); else go(i+1);
+  },450); };
 
   if(needA){ m.a.onended=()=>{ doneA=true; tick(); }; }
   // 마지막 줄이 뜨자마자 넘기지 않는다 — 뜬 것을 읽을 시간이 필요하다(실측:

@@ -42,6 +42,9 @@ function pickType() {
   return {mime: "", ext: "webm"};
 }
 
+/* 첫 장이 자리를 잡을 때까지 기다렸다 녹화를 켠다 — 그만큼 앞이 안 담긴다. */
+const START_DELAY = 1000;
+
 const clock = (s) => {
   const v = Math.max(0, Math.round(s));
   const m = Math.floor(v / 60);
@@ -218,6 +221,7 @@ export async function mount(root, ctx) {
     clearInterval(tick);
     if (stream) stream.getTracks().forEach((k) => k.stop());
     stream = null;
+    document.body.classList.remove("rec-live");
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
     setRunning(false);
   }
@@ -227,12 +231,17 @@ export async function mount(root, ctx) {
       toast("이 브라우저는 화면 녹화를 지원하지 않습니다 — Chrome 또는 Edge 를 쓰세요", "err");
       return;
     }
-    /* ★ **전체 화면을 먼저 건다.** 공유 창을 띄운 뒤에 걸면 안 된다 —
-     * `requestFullscreen()` 은 사람의 동작 직후에만 허용되는데, 공유 창을
-     * 기다리는 동안(await) 그 권한이 만료된다. 그러면 조용히 실패하고
-     * **앱 화면이 통째로 녹화된다**(2026-08-14 실측: 레일·서랍까지 다 찍혔다).
-     * 누른 직후가 유일하게 확실한 자리다. */
-    try { await stage.requestFullscreen(); } catch { /* 막혀도 녹화는 된다 */ }
+    /* ★ **누르는 즉시** 슬라이드가 화면을 덮게 한다. `await` 하나 없이 먼저 건다 —
+     * 공유 창의 미리보기(썸네일)에도 이미 슬라이드만 보여야 하기 때문이다
+     * (2026-08-14 지시: "최초에 녹화 시작할 때부터의 화면이 슬라이드만 떠야").
+     *
+     * ★ 전체 화면(`requestFullscreen`)은 **쓰지 않는다.** 두 가지 이유다.
+     *   ① 탭 녹화는 페이지 안쪽만 찍는다 — 브라우저 테두리는 애초에 안 들어간다.
+     *      즉 전체 화면이 하던 일은 "앱 UI 가리기" 하나뿐인데 그건 CSS 로 된다.
+     *   ② `requestFullscreen()` 은 사람의 동작 직후에만 허용되는데, 공유 창을
+     *      기다리는 동안(await) 그 권한이 만료된다. 조용히 실패하면 레일·서랍이
+     *      통째로 녹화된다(실측). 되기도 하고 안 되기도 하는 길은 안 쓴다. */
+    document.body.classList.add("rec-live");
 
     try {
       stream = await navigator.mediaDevices.getDisplayMedia({
@@ -242,8 +251,8 @@ export async function mount(root, ctx) {
         preferCurrentTab: true,
       });
     } catch (e) {
-      // 사용자가 취소한 것은 오류가 아니다. 다만 먼저 건 전체 화면은 되돌린다.
-      if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+      // 사용자가 취소한 것은 오류가 아니다. 다만 먼저 덮어 둔 화면은 되돌린다.
+      document.body.classList.remove("rec-live");
       if (e && e.name !== "NotAllowedError") toast("화면을 받지 못했습니다: " + e.message, "err");
       return;
     }
@@ -274,23 +283,32 @@ export async function mount(root, ctx) {
     out.hidden = true;
     out.textContent = "";
     setRunning(true);
-    rec.start(1000);
-    t0 = Date.now();
     t.textContent = "0:00";
-    tick = setInterval(() => { t.textContent = clock((Date.now() - t0) / 1000); }, 500);
+    note.textContent = "슬라이드를 여는 중…";
 
-    /* 1장부터 새로 시작하고 자동 재생 문을 연다.
-       ★ 같은 서버라(same-origin) iframe 안을 만질 수 있다. 브라우저 자동재생
-         정책 때문에 첫 소리에는 사람의 동작이 필요한데, 방금 «녹화 시작» 을
-         누른 것이 그 동작이라 이어진다. 그래도 막히면 문이 그대로 보이므로
-         사람이 직접 누르면 된다 — 그래서 문을 없애지 않는다. */
-    fr.src = src();
+    /* ★ **첫 장이 자리를 잡은 뒤에 녹화를 시작한다**(2026-08-14: "1초 후부터
+     * 저장하거나"). 스트림은 이미 살아 있지만 MediaRecorder 를 늦게 켜면 그
+     * 앞은 애초에 담기지 않는다 — 나중에 앞을 잘라 내는 것보다 낫다. 잘라 내려면
+     * 첫 조각을 버려야 하는데, 거기에 파일 머리(코덱 정보)가 들어 있어서 버리면
+     * 파일이 깨진다.
+     *
+     * 1장부터 새로 열고 자동 재생 문을 연다. 같은 서버라(same-origin) iframe
+     * 안을 만질 수 있다. 브라우저 자동재생 정책 때문에 첫 소리에는 사람의 동작이
+     * 필요한데, 방금 «녹화 시작» 을 누른 것이 그 동작이라 이어진다. 그래도 막히면
+     * 문이 그대로 보이므로 사람이 직접 누르면 된다 — 그래서 문을 없애지 않는다. */
     fr.onload = () => {
       try {
-        const d = fr.contentDocument;
-        d.querySelector('#gate [data-go="auto"]')?.click();
+        fr.contentDocument.querySelector('#gate [data-go="auto"]')?.click();
       } catch { /* 못 누르면 사람이 누른다 */ }
+      setTimeout(() => {
+        if (!stream || !rec || rec.state !== "inactive") return;  // 그새 취소됨
+        rec.start(1000);
+        t0 = Date.now();
+        tick = setInterval(() => { t.textContent = clock((Date.now() - t0) / 1000); }, 500);
+        note.textContent = "";
+      }, START_DELAY);
     };
+    fr.src = src();
   }
 
   function finish(mime) {
@@ -354,13 +372,26 @@ export async function mount(root, ctx) {
     if (autoSave) { autoSave = false; doSave(); }
   }
 
+  /* 녹화 중인지의 기준은 **스트림이 살아 있는가** 다. `rec.state` 로만 보면
+     시작을 기다리는 1초 동안(START_DELAY) 멈출 수가 없다 — 그 사이에 누르면
+     녹화가 하나 더 시작된다. */
   btn.onclick = () => {
+    if (!stream) { start(); return; }
     if (rec && rec.state !== "inactive") rec.stop();
-    else start();
+    else stopAll();
   };
+
+  // 화면을 덮고 있는 동안 빠져나올 길 — Esc 하나면 된다
+  const onKey = (e) => {
+    if (e.key !== "Escape" || !stream) return;
+    e.preventDefault();
+    btn.click();
+  };
+  addEventListener("keydown", onKey);
 
   // 화면을 떠나면 반드시 끈다 — 안 끄면 탭 공유가 계속 살아 있다
   page.addEventListener("x-unmount", () => {
+    removeEventListener("keydown", onKey);
     if (rec && rec.state !== "inactive") { try { rec.stop(); } catch { /* 이미 끝남 */ } }
     stopAll();
   });

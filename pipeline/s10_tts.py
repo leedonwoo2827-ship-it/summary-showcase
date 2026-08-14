@@ -218,8 +218,16 @@ def run(job, pid: int, slug: str, project: Dict[str, Any], *, force: bool = Fals
             job.add_log(f"초당 글자수 보정: {cur} → {calib} (실측)")
             job.add_log("  대본 추정 길이가 다시 계산됩니다 — 대본을 다시 굽지 않아도 됩니다")
 
+    # ★ 해시는 **지금 상태의 project 로** 적는다. 시작할 때 받은 `project` 로
+    #   적으면 안 된다 — 바로 위에서 이 단계가 `narration.chars_per_sec` 을
+    #   되써 넣는데, 그 값이 이 단계의 입력(`reads=["narration", …]`)이기 때문이다.
+    #   옛 값으로 적으면 **방금 성공한 이 단계가 저장하는 순간 「낡음」이 된다.**
+    #   화면에서는 18분짜리 음성 합성을 막 끝냈는데 "다시 해야 할 것: 음성 합성"
+    #   이 떠서, 무엇을 더 눌러야 하는지 알 수 없었다(2026-08-14 지적:
+    #   "낡았다는 게 앞에 뭐가 수정이 되면 떠야 되거든요").
     return write_cache(pid, slug, "s10-tts",
-                       input_hash=stage.input_hash(pid, slug, project),
+                       input_hash=stage.input_hash(pid, slug,
+                                                   ws.load_project(pid, slug)),
                        data={"slides": out, "engine": "voicewright",
                              "sample_rate": res.get("sample_rate"),
                              "total_sec": total},

@@ -25,7 +25,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from core import workspace as ws
+from core import steps, workspace as ws
 from pipeline.registry import ORDER, STAGES, read_cache, stage_states
 
 # 산출물 — 무엇을 만든 것인지 사람 말로. 이게 "영상인지 슬라이드인지" 를 가른다.
@@ -101,27 +101,81 @@ def build(pid: int, slug: str, project: Dict[str, Any], *,
                      "label": "손으로 고침", "status": "ok",
                      "note": f"{n}장" if n else "설정"})
 
+    # 번호를 여기서 붙인다 — 화면이 스테이지 키를 알 필요가 없다.
+    for r in done:
+        st = steps.of(r.get("key"))
+        if st:
+            r["n"] = st["n"]
+            r["step"] = st["name"]
+
     done.sort(key=lambda r: r["at"], reverse=True)
 
-    # ── 다시 해야 할 것 ────────────────────────────────────────────────────
-    # ★ **낡은 것만** 올린다. "아직 안 돈 단계" 는 여기 섞지 않는다 — 발표 하나에
-    #   열여섯 단계가 다 필요한 경우는 거의 없고(영상이 없으면 프레임 추출은
-    #   영영 안 돈다), 그것들이 늘 목록에 앉아 있으면 목록 자체를 안 보게 된다.
-    #   여기서 답할 질문은 "무엇을 **다시** 해야 하나" 이고, 그 답은 낡은 것뿐이다.
-    #   아직 안 한 것은 숫자만 세어 현황판으로 보낸다.
-    todo: List[Dict[str, Any]] = []
-    pending = 0
-    for st in stage_states(pid, slug, project):
-        if not st["implemented"] or st["blocked"]:
-            continue
-        if st["state"] == "stale":
-            todo.append({"key": st["key"], "label": st["label"],
-                         "state": "stale", "kind": st["kind"]})
-        elif st["state"] == "missing":
-            pending += 1
+    todo = _stale_by_time(done)
+
+    # 아직 한 번도 안 돈 단계는 **숫자만** 센다. 발표 하나에 열여섯 단계가 다
+    # 필요한 경우는 거의 없어서(영상이 없으면 프레임 추출은 영영 안 돈다), 그것들이
+    # 목록에 늘 앉아 있으면 목록 자체를 안 보게 된다.
+    pending = sum(1 for st in stage_states(pid, slug, project)
+                  if st["implemented"] and not st["blocked"]
+                  and st["state"] == "missing")
 
     return {"done": done[:limit], "todo": todo, "pending": pending,
+            "steps": steps.STEPS,
             "spent_usd": round(sum(r.get("cost_usd") or 0 for r in done), 4)}
+
+
+def _stale_by_time(done: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """무엇이 낡았나 — **시간으로 판정한다.**
+
+    ★ 「낡음」 의 뜻을 정확히 이렇게 둔다(2026-08-14 지시):
+
+        덱보다 **앞선 것**이, 지금 **완성작**보다 **나중에** 고쳐졌다.
+
+      즉 대본을 고친 뒤 아직 안 구웠으면 6번이 낡았고, 구운 뒤 아직 영상을 안
+      냈으면 7번이 낡았다. 그게 전부다.
+
+    ★ 예전에는 스테이지의 입력 해시가 어긋났는지로 판정했다. 그건 **사람이 확인할
+      수 없는 기준**이다 — 방금 18분짜리 음성 합성을 끝냈는데 "다시 해야 할 것:
+      음성 합성" 이 뜨는 일이 실제로 있었다(그 단계가 자기 결과를 project.json 에
+      되써 넣어 스스로를 낡게 만들었다). 시각 비교는 눈으로 검증된다 — "아까 대본을
+      고쳤으니 다시 구워야지" 가 그대로 읽힌다.
+
+    ★ 해시 판정을 없애지는 않는다. 현황판과 자동 실행은 그대로 그것을 쓴다 —
+      거기서는 "정말 다시 계산해야 하는가" 가 질문이라 기준이 달라도 된다.
+      여기는 **사람에게 무엇을 누르라고 말하는 자리**다.
+    """
+    last: Dict[int, str] = {}            # 단계 번호 → 마지막에 끝난 시각
+    hand_at = ""                         # 손으로 고친 마지막 시각
+    for r in done:
+        at = r.get("at") or ""
+        if r.get("kind") == "hand":
+            hand_at = max(hand_at, at)
+            continue
+        n = steps.n_of(r.get("key"))
+        if n is None or not at:
+            continue
+        last[n] = max(last.get(n, ""), at)
+
+    out: List[Dict[str, Any]] = []
+    for st in steps.STEPS:
+        mine = last.get(st["n"])
+        if not mine:
+            continue                     # 한 번도 안 했으면 "다시" 가 아니다
+
+        # 나보다 앞선 것 중 **나보다 나중에** 손댄 것. 가장 최근 것 하나만 말한다 —
+        # 셋을 다 늘어놓아도 할 일은 어차피 "이 단계를 다시" 하나뿐이다.
+        newer = [(f"{s['n']}. {s['name']}", v)
+                 for s in steps.STEPS
+                 if s["n"] < st["n"] and (v := last.get(s["n"])) and v > mine]
+        if hand_at and st["n"] >= steps.HAND_BEFORE and hand_at > mine:
+            newer.append(("손으로 고침", hand_at))
+        if not newer:
+            continue
+
+        why, since = max(newer, key=lambda x: x[1])
+        out.append({"key": st["keys"][0], "n": st["n"], "label": st["name"],
+                    "state": "stale", "why": why, "since": since})
+    return out
 
 
 def _stage_note(key: str, data: Any) -> str:

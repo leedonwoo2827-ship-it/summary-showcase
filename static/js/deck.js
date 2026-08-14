@@ -24,6 +24,7 @@ import { state } from "./store.js";
 import { navigate } from "./shell.js";
 import { videoEditor as ved } from "./videoedit.js";
 import { runSteps } from "./runner.js";
+import { stepBadge, DECK } from "./steps.js";
 
 /* ★ 손편집의 키는 **원래 번호(src_no)** 다.
  *
@@ -78,18 +79,25 @@ export const meta = {
     /* 배경음악 — 굽기 **전에** 정해지는 값이라 굽기 버튼 옆에 둔다.
      * 완성본 카드 안에 두면 한 번이라도 구운 프로젝트에서만 보여서, 정작
      * 처음 굽기 전에는 고를 수가 없다. */
+    /* ★ 번호를 붙인다(2026-08-14 지시). 버튼 이름은 **행동**을 말하고
+     * (「발음대본 생성」) 오른쪽 이력은 **산출물**을 말해서(「내레이션 대본」),
+     * 같은 일인지 다른 일인지가 안 읽혔다 — "지금이 3번 할 타이밍인가 4번 할
+     * 타이밍인가" 가 늘 남았다. 이름은 그대로 두고 번호가 둘을 잇는다.
+     * 번호표의 원본은 `core/steps.py` 다 — 이력 줄은 서버가 번호를 실어 보내고,
+     * 여기 넷은 누르기 전이라 받아 올 이력이 없어 steps.js 의 DECK 를 쓴다. */
     const bgm = bgmButton();
+    bgm.prepend(stepBadge(DECK.bgm, "배경음악 — 굽기 전에 정합니다. 안 넣어도 됩니다"));
 
-    const [sBtn, sLab] = mkRun("발음대본 생성", "글을 읽는 말로 — 발음 교정 포함");
+    const [sBtn, sLab] = mkRun(DECK.script, "발음대본 생성", "글을 읽는 말로 — 발음 교정 포함");
 
-    const [bBtn, bLab] = mkRun("음성/자막 굽기", "음성 합성 · 자막 · 조립 · 파일 빌드");
+    const [bBtn, bLab] = mkRun(DECK.bake, "음성/자막 굽기", "음성 합성 · 자막 · 조립 · 파일 빌드");
     bBtn.classList.add("primary");
 
     /* ★ S9(완성본)는 일부러 mp4 를 안 굽는다 — "재생하며 화면녹화" 가 원래 설계다.
      * 이 버튼은 그 대신 장마다 화면을 캡처하고 내레이션 길이만큼 이어 붙여
      * **결정론적으로** mp4 를 만든다(S12). 실시간 녹화가 아니라 화면-소리가
      * 어긋날 일이 없다. 음성을 아직 안 구웠어도 무음으로라도 나온다. */
-    const [vBtn, vLab] = mkRun("영상 렌더", "장마다 화면 캡처 + 내레이션 길이로 이어 붙여 mp4 하나로");
+    const [vBtn, vLab] = mkRun(DECK.video, "영상 렌더", "장마다 화면 캡처 + 내레이션 길이로 이어 붙여 mp4 하나로");
 
     /* ★ 굽는 단계는 **한 번에 하나만.** 한 잡이 도는 동안 다른 버튼이 멀쩡히
      * 눌리면 같은 산출물에 잡 둘이 동시에 손을 대 꼬인다 — 실제로 겪은 사고다
@@ -192,12 +200,13 @@ const BAKE_KO = {
   "s8-assemble": "조립", "s9-render": "파일 빌드", "s12-video": "영상 렌더",
 };
 
-function mkRun(name, tip) {
+function mkRun(n, name, tip) {
   const b = el("button", "btn");
   b.type = "button";
-  b.title = tip + " — 몇 분 걸립니다";
+  b.title = `${n}. ${tip} — 몇 분 걸립니다`;
   const l = el("span", null, `(전체) ${name}`);
-  b.append(icon("wand", 14), l);
+  // 번호가 맨 앞이다 — 눈이 왼쪽에서 오른쪽으로 훑으며 순서를 읽는다.
+  b.append(stepBadge(n, tip), icon("wand", 14), l);
   return [b, l];
 }
 

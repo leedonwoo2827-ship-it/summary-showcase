@@ -13,6 +13,7 @@ import { $, $$, el, toast, api } from "./util.js";
 import { hydrateIcons } from "./icons.js";
 import { openPanel, closePanel, isOpen as panelOpen, setActions } from "./panel.js";
 import { state, getProject, getProjects, invalidate } from "./store.js";
+import { stepBadge } from "./steps.js";
 
 const view = $("#view");
 
@@ -401,8 +402,12 @@ async function refreshLog(force) {
     for (const t of a.todo) {
       const b = el("button", "log-todo");
       b.type = "button";
-      b.append(el("span", "log-todo-n", t.label), el("span", "log-todo-s", "낡음"));
-      b.title = "앞 단계나 설정이 바뀌어 결과가 낡았습니다 — 다시 돌리면 됩니다";
+      if (t.n) b.appendChild(stepBadge(t.n, `${t.n}. ${t.label}`));
+      // ★ **무엇 때문에** 낡았는지를 같이 적는다. 그게 없으면 "왜 또 하라는
+      //   거지" 가 되고, 한 번 그렇게 읽히면 그 다음부터 이 줄을 안 믿는다.
+      b.append(el("span", "log-todo-n", t.label),
+               el("span", "log-todo-s", t.why ? `${t.why} 뒤` : "낡음"));
+      b.title = `${t.label} 다음에 «${t.why}» 를 했습니다 — 다시 돌리면 맞춰집니다`;
       b.onclick = () => navigate("/board");
       body.appendChild(b);
     }
@@ -417,7 +422,14 @@ async function refreshLog(force) {
                         + (r.status && r.status !== "ok" ? " bad" : ""));
     row.append(el("span", "log-when", ago(r.at)));
     const mid = el("span", "log-mid");
-    mid.appendChild(el("b", null, r.label || r.key));
+    /* ★ 덱의 버튼과 **같은 번호, 같은 배지**를 단다. 이름은 서로 다르다 —
+     * 버튼은 「발음대본 생성」, 여기는 「내레이션 대본」. 그 둘이 같은 일인지
+     * 매번 헷갈렸다("지금이 3번 할 타이밍인가 4번 할 타이밍인가"). 번호가
+     * 그 둘을 잇는다. 순서에 없는 일(손편집)에는 억지로 붙이지 않는다. */
+    const head = el("b");
+    if (r.n) head.appendChild(stepBadge(r.n, `${r.n}. ${r.step}`));
+    head.appendChild(el("span", null, r.label || r.key));
+    mid.appendChild(head);
     const sub = [];
     if (r.note) sub.push(r.note);
     if (r.mb) sub.push(`${r.mb}MB`);

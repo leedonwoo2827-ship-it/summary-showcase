@@ -423,6 +423,15 @@ body.one #bgmb{display:none}
 #av{position:fixed;right:0;bottom:0;width:20%;aspect-ratio:3/4;z-index:7;
     pointer-events:none}
 body.one #av{display:none}
+/* ★ 녹화 모드 — 우상단 단추를 통째로 감춘다(2026-08-14 지시: "여기의 우상단을
+   가리고 녹화하는 방법을 고안해 보세요"). 화면을 그대로 녹화해 영상을 만드는
+   길이 실제로 제일 잘 나오는데(줄이 차례로 뜨는 것이 그대로 담긴다), 그때
+   재생 단추·안내 글자가 본문 오른쪽 끝과 겹쳐 같이 찍힌다.
+   `?bare=1` 로 시작하거나 재생 중 **H** 로 껐다 켠다 — 녹화를 시작해 놓고
+   손을 뻗어 끌 수 있어야 하므로 글쇠가 필요하다.
+   진행바(#bar)는 남긴다. 화면 맨 아래 3px 이라 본문을 가리지 않고, 어디쯤
+   왔는지가 영상에 있는 편이 낫다. */
+body.bare #pz,body.bare #bgmb,body.bare #hud{display:none}
 #hud b{color:#6b6660}
 #hud kbd{font:inherit;color:#b3aca3}
 #hud em{font-style:normal;font-weight:800;color:#9a4d33}
@@ -468,6 +477,8 @@ const _one=_q!=null;
    (tools/render_frames.mjs) 와 수정 화면에서 "9초에 어떻게 보이나" 를 확인할 때
    쓴다. 애니메이션이 아니라 결과 상태라서, 찍는 쪽이 몇 초를 기다릴 필요가 없다. */
 const _atQ=_p.has('at')?parseFloat(_p.get('at')):null;
+// 녹화 모드 — 우상단 단추를 감춘다. `?bare=1` 로 시작하거나 H 로 껐다 켠다.
+if(_p.get('bare')==='1')document.body.classList.add('bare');
 // 한 장만 보는 자리 — 진행바·HUD·자막층은 군더더기다
 if(_one){document.body.classList.add('one');}
 /* ★ `?n=` 은 **원래 번호**(src_no)다 — 순번이 아니다. 뺀 장이 있으면 조립이
@@ -690,11 +701,18 @@ function pauseHtml(){
   htmlT0=0;
   htmlT.forEach(clearTimeout); htmlT=[];
 }
+/* ★ **켜기만 한다. 끄지 않는다.**
+   한 장 안에서 등장은 되돌아가지 않는다 — 뜬 줄이 다시 사라질 이유가 없다.
+   장을 넘길 때는 go() 가 통째로 걷으므로 여기서 끌 필요도 없다.
+   `toggle` 로 두었더니 이런 일이 났다(2026-08-14 실측): `?n=` 한 장 보기와
+   영상 프레임 촬영은 재생을 하지 않아 `currentTime` 이 0에 머무는데, 이 시계는
+   100ms 마다 계속 돌아서 **armHtml 이 다 켜 놓은 줄을 0.1초 뒤에 도로 껐다.**
+   그래서 영상에 표 안이 텅 빈 채로 구워졌다. */
 function showReveal(sec,t){
   const box=sec&&sec.querySelector('.m-html'); if(!box)return;
   const ats=htmlAts(box);
   box.querySelectorAll('.hb').forEach((b,k)=>{
-    b.classList.toggle('on',(ats[k]||0)<=t);
+    if((ats[k]||0)<=t) b.classList.add('on');
   });
 }
 /* 그 장의 마지막 줄이 뜨는 시각(ms) — 자동 넘김이 이보다 일찍 넘어가면 안 된다. */
@@ -849,6 +867,8 @@ addEventListener('keydown',e=>{
   if(e.key==='c'||e.key==='C'){subs=!subs;if(!subs)cc.className='';}
   if(e.key==='a'||e.key==='A'){setAuto(!auto);}
   if(e.key==='m'||e.key==='M'){bgmSet(!bgmWant);}
+  // 녹화용 — 우상단 단추 감추기/보이기. 녹화를 켜 놓고 손을 뻗어 끌 수 있어야 한다.
+  if(e.key==='h'||e.key==='H'){document.body.classList.toggle('bare');}
 });
 
 function setPaused(on){
@@ -881,7 +901,7 @@ function paint(){
   }
   hud.innerHTML='<b>'+(i+1)+'</b> / '+slides.length
     +(auto?(paused?' &nbsp;<em class="p">멈춤</em>':' &nbsp;<em>자동</em>'):'')
-    +' &nbsp;<kbd>Space 멈춤 · ← → · A 자동 · C 자막</kbd>';
+    +' &nbsp;<kbd>Space 멈춤 · ← → · A 자동 · C 자막 · H 단추 감추기</kbd>';
 }
 
 function setAuto(on){

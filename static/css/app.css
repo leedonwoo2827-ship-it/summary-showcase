@@ -478,6 +478,25 @@ body[data-rail="collapsed"] .side-user .i { display: none; }
 
 .content { flex: 1 1 auto; min-width: 0; padding: var(--pad-t) var(--pad-x) 72px; outline: none; }
 
+/* 순서 번호 — 덱의 버튼과 오른쪽 이력에 **같은 모양**으로 붙는다.
+   모양이 다르면 같은 번호인지 눈이 못 잇는다. 그게 붙이는 이유의 전부다.
+   (static/js/steps.js 가 번호표) */
+.stepn {
+  flex: 0 0 auto; display: inline-grid; place-items: center;
+  width: 17px; height: 17px; border-radius: 50%;
+  background: var(--brand); color: #fff;
+  font-size: 10.5px; font-weight: 800; font-style: normal;
+  font-variant-numeric: tabular-nums; line-height: 1;
+}
+/* 버튼 안에서는 한 톤 낮춘다 — 버튼 자체가 이미 눈에 띄어서, 번호까지 진하면
+   무엇을 누르는 버튼인지보다 번호가 먼저 읽힌다. */
+.btn .stepn { background: var(--paper-deep); color: var(--text-2); }
+.btn.primary .stepn { background: rgb(255 255 255 / .28); color: #fff; }
+.btn.warn .stepn { background: rgb(255 255 255 / .28); color: #fff; }
+.btn:disabled .stepn { opacity: .5; }
+.log-todo .stepn { background: var(--brand); color: #fff; }
+.log-todo.new .stepn { background: var(--text-3); }
+
 /* ══ 오른쪽 서랍 — 최근 한 일 ═════════════════════════════════════════════
    ★ 접었을 때 **탭 하나(34px)만** 남긴다. 완전히 감추면 있는 줄을 모르고,
      넓게 남기면 안 쓰는 사람 화면을 상시로 좁힌다.
@@ -525,7 +544,8 @@ body[data-rail="collapsed"] .side-user .i { display: none; }
   font-variant-numeric: tabular-nums; white-space: nowrap; }
 .log-mid { min-width: 0; display: grid; gap: 1px; }
 .log-mid b { font-size: 12px; font-weight: 600; color: var(--text-1);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  display: flex; align-items: center; gap: 5px; min-width: 0; }
+.log-mid b > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .log-sub { font-size: 10.5px; color: var(--text-3);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* 산출물은 진하게 — "영상을 낸 건가 슬라이드를 낸 건가" 가 이 서랍의 첫 질문이다 */

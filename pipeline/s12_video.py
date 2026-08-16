@@ -116,8 +116,11 @@ def run(job, pid: int, slug: str, project: Dict[str, Any], *, force: bool = Fals
             ats = [float(c["at"]) for c in cuts]
             spans = [max(0.05, (ats[k + 1] if k + 1 < len(ats) else dur) - ats[k])
                      for k in range(len(ats))]
+            # ★ 내레이션 길이를 같이 넘긴다 — 컷 시각이 그보다 뒤에 있으면
+            #   그림이 오디오보다 길어져 장 끝에 무음이 붙는다(`ff.py` 주석).
             ok, err = ff.image_seq_audio_clip(
-                [frames_dir / c["image"] for c in cuts], spans, seg, audio=audio_path)
+                [frames_dir / c["image"] for c in cuts], spans, seg,
+                audio=audio_path, audio_sec=dur)
 
         if not ok:
             warn.append(f"{no}번 조각 실패: {err[:120]}")

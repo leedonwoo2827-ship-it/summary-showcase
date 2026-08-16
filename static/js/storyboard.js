@@ -73,6 +73,13 @@ export async function storyboard(stageHost, rowsHost, cueHost, no) {
 
   const hd = el("div", "sb-hd");
   hd.append(el("b", null, "스토리보드 — 말하는 차례와 글자 뜨는 차례"));
+  /* ★ 어디까지 봤는지 — 31장을 한자리에서 다 볼 수 없다. 파일에 남은 것을
+     그대로 보여 준다(`zones.json` 의 씬마다 `done`). */
+  if (d.todo_n) {
+    const pg = el("span", "sb-done" + (d.done ? " on" : ""),
+      `${d.done_n} / ${d.todo_n} 정리됨` + (d.done ? " · 이 장 됨" : ""));
+    hd.appendChild(pg);
+  }
   const cnt = el("span", "sb-cnt");
   hd.appendChild(cnt);
 
@@ -387,7 +394,11 @@ export async function storyboard(stageHost, rowsHost, cueHost, no) {
       const r = await api(`/api/projects/${state.projectId}/motion/scene/${no}`,
         { method: "POST", body: { boxes, done: true } });
       toast(`${no}장 정리됐습니다 — 상자 ${r.boxes}개 · 시각 ${r.timed}개`);
-      dispatchEvent(new CustomEvent("sb:done", { detail: { no } }));
+      /* ★ 정리하고 → 다음. 이 화면의 주 동작이 그것이라 저장이 곧 넘김이다.
+         31장을 한 장씩 눌러 찾아가게 두면 훑는 일이 금세 지친다. */
+      const nx = document.querySelector(".focus-nav .nx:not(:disabled)");
+      if (nx) setTimeout(() => nx.click(), 400);
+      else dispatchEvent(new CustomEvent("sb:done", { detail: { no } }));
     } catch (e) {
       toast("저장하지 못했습니다: " + e.message, "err");
     } finally { sLab.textContent = was; save.disabled = false; }

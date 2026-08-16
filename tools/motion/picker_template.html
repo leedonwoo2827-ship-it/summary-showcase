@@ -77,6 +77,8 @@ textarea{width:100%;height:110px;background:#0e1116;color:#9fd0ff;border:1px sol
   <button id="auto">시간 고르게 배분</button>
   <button id="tclr">시간 지우기</button>
   <button id="cpAll">모든 씬에 이 상자 복사</button>
+  <button id="ld">zones.json 불러오기</button>
+  <input type="file" id="lf" accept="application/json,.json" hidden>
   <button class="pri" id="dl">zones.json 내려받기</button>
   <button id="cp">JSON 복사</button>
 </header>
@@ -199,6 +201,37 @@ function mmss(v){const m=Math.floor(v/60),s=v-m*60;
 function json(){return JSON.stringify({video:D.video,W:D.W,H:D.H,
   scenes:S.map((s,i)=>({i:s.i,cut:s.cut,len:+len(i).toFixed(2),
     boxes:s.boxes.map(b=>({x:b.x,y:b.y,w:b.w,h:b.h,kind:b.kind,t:b.t||''}))}))},null,1);}
+/* ★ 이어서 하기 — 내려받아 둔 zones.json 을 다시 읽어 들인다.
+   예전에는 이 문이 없었다. 그래서 탭을 닫으면 찍어 둔 상자가 사라졌고, 앱에서
+   고친 차례·시각을 놓고 지정기를 열면 처음 자동 제안으로 돌아가, 거기서
+   내려받아 넣는 순간 앱 쪽 작업이 통째로 덮였다(2026-08-16 에 시각 186개가
+   그렇게 날아갔다). 읽어 들일 수 있으면 그 사고가 없어진다.
+   ★ 씬은 **`cut` 시각으로 짝짓는다.** 번호로 맞추면 영상을 다시 렌더해 장이
+   하나 늘었을 때 전부 한 칸씩 밀린다. `remaster` 도 같은 규칙을 쓴다(±1.5초). */
+function loadZones(txt){
+  let z; try{ z=JSON.parse(txt); }catch(e){ alert('zones.json 이 아닙니다'); return; }
+  const zs=z&&z.scenes; if(!Array.isArray(zs)||!zs.length){ alert('scenes 가 없습니다'); return; }
+  let hit=0, miss=0;
+  S.forEach((s,i)=>{
+    let best=null,bd=1e9;
+    zs.forEach(o=>{const d=Math.abs((o.cut==null?-999:o.cut)-s.cut); if(d<bd){bd=d;best=o;}});
+    if(best&&bd<=1.5){
+      s.boxes=(best.boxes||[]).map(b=>({x:+b.x||0,y:+b.y||0,w:+b.w||0,h:+b.h||0,
+        kind:(b.kind==='art'||b.kind==='sheen')?b.kind:'text', t:b.t||''}));
+      hit++;
+    } else miss++;
+  });
+  sel=-1; undo=[]; draw();
+  alert(`불러왔습니다 — 짝지은 씬 ${hit}개`+(miss?` · 못 짝지은 씬 ${miss}개`:'')
+        +`\n상자 ${S.reduce((a,s)=>a+s.boxes.length,0)}개`);
+}
+document.getElementById('ld').onclick=()=>document.getElementById('lf').click();
+document.getElementById('lf').onchange=function(){
+  const f=this.files&&this.files[0]; this.value='';
+  if(!f) return;
+  const r=new FileReader(); r.onload=()=>loadZones(String(r.result)); r.readAsText(f);
+};
+
 function draw(){im.src=IMGS[cur];document.getElementById('ttl').textContent=`씬 ${cur+1} / ${S.length}`;
   document.getElementById('tm').textContent=
     `전환 ${S[cur].cut}초 · 이 씬 길이 ${len(cur).toFixed(1)}초 (0:00 ~ ${mmss(len(cur))})`;

@@ -731,7 +731,8 @@ export async function mount(root, ctx) {
     prev.append(icon("chevronLeft", 14), el("span", null, "이전"));
     prev.disabled = i <= 0;
     prev.onclick = () => show(slides[i - 1].no);
-    const next = el("button", "btn ghost"); next.type = "button";
+    // ★ `nx` 표는 스토리보드가 찾는다 — 「정리됨·저장」이 곧 다음 장으로 넘김이다
+    const next = el("button", "btn ghost nx"); next.type = "button";
     next.append(el("span", null, "다음"), icon("chevronRight", 14));
     next.disabled = i >= slides.length - 1;
     next.onclick = () => show(slides[i + 1].no);

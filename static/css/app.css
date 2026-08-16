@@ -2250,3 +2250,8 @@ label.check input { width: auto; }
   line-height: 1.5; }
 /* 시각이 빠진 상자가 있으면 눈에 걸리게 — 안 보이면 빈 채로 굽는다 */
 .sb-cnt.warn { color: var(--warn); font-weight: 700; }
+/* 어디까지 봤나 — 31장을 한자리에서 다 볼 수 없다 */
+.sb-done { flex: 0 0 auto; padding: 2px 9px; border-radius: var(--r-pill);
+  background: var(--paper); color: var(--text-3); font-size: 11px;
+  font-variant-numeric: tabular-nums; }
+.sb-done.on { background: var(--ok-wash); color: var(--ok); font-weight: 700; }

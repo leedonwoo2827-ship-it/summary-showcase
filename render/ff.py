@@ -71,7 +71,8 @@ def image_audio_clip(image: Path, dst: Path, *, audio: Optional[Path] = None,
 
 
 def image_seq_audio_clip(images: List[Path], durations: List[float], dst: Path, *,
-                         audio: Optional[Path] = None, fps: int = 30) -> tuple[bool, str]:
+                         audio: Optional[Path] = None, fps: int = 30,
+                         audio_sec: float = 0.0) -> tuple[bool, str]:
     """이미지 **여러 장**(각자 머무는 시간) + 오디오 하나 → 조각 하나.
 
     한 장 안에서 줄이 하나씩 뜨는 것을 담는 자리다. 컷마다 다음 컷 시각까지
@@ -87,12 +88,35 @@ def image_seq_audio_clip(images: List[Path], durations: List[float], dst: Path, 
     if not images:
         return False, "이미지 없음"
     dst.parent.mkdir(parents=True, exist_ok=True)
+
+    # ★ **`-shortest` 는 concat 이미지 입력에 안 걸린다.** 실측: 그림 구간 합계
+    #   70초 · 오디오 39.5초 → 나온 것 70초. 그래서 컷 시각이 내레이션보다 뒤에
+    #   있는 장은 그만큼 길어졌고, 장마다 1.7초씩 쌓여 23분짜리가 **50초** 길었다
+    #   (2026-08-17 실측: 음성 합계 1369.0초 vs 영상 1418.9초).
+    #   장 끝마다 멈칫하고, 영상이 내레이션보다 길어진다.
+    # ★ 그래서 **구간을 오디오 길이에 맞춰 여기서 자른다.** `-t` 로 자르려 해 봤지만
+    #   concat 과 함께 쓰면 첫 구간 길이로 잘려 버린다(10초로 잘렸다) — 쓰면 안 된다.
+    cap = float(audio_sec or 0)
+    spans = [max(float(d), 0.05) for d in durations]
+    if cap > 0:
+        keep: List[float] = []
+        left = cap
+        for s in spans:
+            if left <= 0.05:
+                break
+            keep.append(min(s, left))
+            left -= keep[-1]
+        spans = keep or [cap]
+    imgs = list(images)[:len(spans)]
+
     lst = dst.with_suffix(".txt")
     lines: List[str] = []
-    for img, d in zip(images, durations):
+    for img, d in zip(imgs, spans):
         lines.append(f"file '{img.resolve().as_posix()}'")
-        lines.append(f"duration {max(float(d), 0.05):.3f}")
-    lines.append(f"file '{images[-1].resolve().as_posix()}'")
+        lines.append(f"duration {d:.3f}")
+    # ★ 마지막 파일을 **한 번 더** 적어야 그 앞 항목의 duration 이 적용된다
+    #   (concat demuxer 규칙). 빼면 첫 구간만 남는다 — 실측으로 10초가 됐다.
+    lines.append(f"file '{imgs[-1].resolve().as_posix()}'")
     lst.write_text("\n".join(lines), encoding="utf-8")
 
     args = ["-f", "concat", "-safe", "0", "-i", str(lst)]

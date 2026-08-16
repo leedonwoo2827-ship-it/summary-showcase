@@ -382,6 +382,13 @@ def scene_of(pid: int, slug: str, no: int) -> Dict[str, Any]:
         return out
     out["has_zones"] = True
     out["len"] = round(float(sc.get("len") or 0), 2)
+    out["done"] = bool(sc.get("done"))
+    # ★ **어디까지 봤나.** 31장을 한자리에서 다 볼 수 없고, 어제 어디서 멈췄는지가
+    #   파일에 남아야 오늘 이어서 본다. 상자가 있는 장만 센다 — 표지·맺음은
+    #   상자가 없어 볼 것이 없다.
+    todo = [s for s in (z.get("scenes") or []) if (s.get("boxes") or [])]
+    out["done_n"] = sum(1 for s in todo if s.get("done"))
+    out["todo_n"] = len(todo)
 
     rows = []
     for b in (sc.get("boxes") or []):

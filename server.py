@@ -13,6 +13,7 @@ import re
 import subprocess
 import sys
 import threading
+import time
 import webbrowser
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -37,6 +38,7 @@ import pipeline.s2_repo    # noqa: F401
 import pipeline.s2b_outline  # noqa: F401
 import pipeline.s2c_capture  # noqa: F401
 import pipeline.s3_caption  # noqa: F401
+import pipeline.s3a_imgprompt  # noqa: F401
 import pipeline.s3b_images  # noqa: F401
 import pipeline.s5_decisions # noqa: F401
 import pipeline.s6_script   # noqa: F401
@@ -46,6 +48,8 @@ import pipeline.s9_render   # noqa: F401
 import pipeline.s10_tts     # noqa: F401
 import pipeline.s11_audio   # noqa: F401
 import pipeline.s12_video   # noqa: F401
+# ★ 모션은 **스테이지가 아니다** — STAGES 에 붙지 않으므로 이름을 들고 쓴다
+from pipeline import s13_motion as motion
 
 APP_DIR = Path(__file__).resolve().parent
 STATIC = APP_DIR / "static"
@@ -333,6 +337,156 @@ def recopy_slide(pid: int, no: int, body: RecopyIn) -> Dict[str, Any]:
             "tone": tone, "cost_usd": round(p.last_cost_usd, 4)}
 
 
+@app.get("/api/projects/{pid}/youtube")
+def get_youtube(pid: int) -> Dict[str, Any]:
+    """유튜브에 올릴 제목·설명·타임스탬프·태그.
+
+    ★ 파일이 있으면 그것을 읽고, 없으면 **덱에서 지금 만들어 준다.** 영상을 이미
+      구워 둔 프로젝트(파일이 없던 시절에 구운 것)에서도 화면이 비지 않아야 한다.
+
+    ★ **덱보다 오래된 파일은 안 읽는다.** 제목을 고치거나 대본을 손보면 덱이 다시
+      조립되는데, 그때 만들어 둔 `유튜브.txt` 는 옛 제목을 이고 있다(2026-08-15:
+      제목을 바꿨는데 유튜브 글에는 `19_원고` 가 그대로 남았다).
+    """
+    from render import youtube
+
+    doc = _find(pid)
+    slug = doc["slug"]
+    p = ws.project_dir(pid, slug, create=False) / ws.STEPS["dist"][0] / "유튜브.txt"
+    # ★ s8 캐시에는 덱이 아니라 **파일 경로**만 들어 있다 — 덱 본체는 `deck.json` 이다
+    dp = ws.deck_path(pid, slug)
+    if p.is_file() and dp.is_file() and p.stat().st_mtime >= dp.stat().st_mtime:
+        return {"ok": True, "text": p.read_text(encoding="utf-8"), "file": str(p)}
+    deck = ws.read_json(dp, {}) or {}
+    if not deck.get("slides"):
+        raise HTTPException(status_code=404, detail="덱을 먼저 조립하세요")
+    txt = youtube.build(deck, title=(doc.get("title") or slug),
+                        led=(ws.load_ledger(pid, slug).get("by_id") or {}),
+                        book=str(doc.get("book") or ""))
+    return {"ok": True, "text": txt, "file": ""}
+
+
+@app.post("/api/projects/{pid}/youtube/thumb")
+def make_thumb(pid: int) -> Dict[str, Any]:
+    """썸네일용 **원고 한 장**(.md)을 완성 폴더에 내고 그 폴더를 연다.
+
+    ★ 이미지 스튜디오의 «프롬프트 생성기» 는 JSON 이 아니라 **원고 파일**을 받는다
+      (PDF·TXT·MD·DOCX·HWPX·PPTX). 그래서 아홉 칸 JSON 이 아니라 모델이 읽을 글을
+      낸다 — 거기에 끌어다 놓고 「용도=배너·썸네일 · 컷 수=1컷」 만 고르면 된다.
+    """
+    from render import youtube
+
+    doc = _find(pid)
+    slug = doc["slug"]
+    deck = ws.read_json(ws.deck_path(pid, slug), {}) or {}
+    if not deck.get("slides"):
+        raise HTTPException(status_code=404, detail="덱을 먼저 조립하세요")
+    d = ws.step_dir(pid, slug, "dist")
+    p = ws.write_text(d / "유튜브썸네일-원고.txt",
+                      youtube.thumb_md(deck, title=(doc.get("title") or slug),
+                                       led=(ws.load_ledger(pid, slug).get("by_id") or {}),
+                                       book=str(doc.get("book") or "")))
+    return {"ok": True, "file": str(p), "dir": str(d)}
+
+
+class RescriptIn(BaseModel):
+    """한 장만 **대본**을 다시 쓴다. 자막과 발음 두 줄이 같이 나온다."""
+    hint: str = ""
+
+
+@app.post("/api/projects/{pid}/rescript/{no}")
+def rescript_slide(pid: int, no: int, body: RescriptIn) -> Dict[str, Any]:
+    """그 장의 자막·발음 대본을 다시 쓴다.
+
+    ★ 제목·본문에는 「한 장만 다시」가 있는데 대본에는 없었다. 대본 전체를 다시
+      돌리면 31장을 통째로 갈아엎고 이미 손본 장까지 날아간다 — 한 장이 마음에
+      안 들 때 그 한 장만 고치는 자리가 있어야 한다(2026-08-14 지적).
+
+    ★ **원고가 준 대본이 있으면 늘 그것이다.** 작가 에이전트가 `data-say` 에 적어
+      보낸 것이 있으면 Claude 를 안 부른다 — 돈을 쓰고도 더 나빠지기 때문이다.
+      2026-08-14 실측: 거시경제학 장에 대고 「이 서비스의 화면은 두 갈래로
+      나뉩니다… 내 경력 하나를 들여다보는」 이 나왔다($0.22). 이 앱의 대본
+      프롬프트(`script.md`)는 **개발자 포트폴리오 발표**용이라 책 강의에 안 맞는다.
+      AI 로 다시 쓰려면 **사람이 지시를 적어야** 한다 — 그때만 부른다.
+    """
+    from pipeline.s6_script import SCHEMA, build_brief, budgets, clean, est_sec
+    from llm.claude_provider import ClaudeProvider
+
+    doc = _find(pid)
+    slug = doc["slug"]
+    deck = cached_data(pid, slug, "s2b-outline") or {}
+    slides = deck.get("slides") or []
+    sl = next((x for x in slides if x["no"] == no), None)
+    if not sl:
+        raise HTTPException(status_code=404, detail=f"{no}번 장이 없습니다")
+
+    cfg = config.load()
+    cache = cached_data(pid, slug, "s6-script") or {}
+    cur = dict((cache.get("slides") or {}).get(str(no)) or {})
+    cps = float((doc.get("narration") or cfg["narration"]).get("chars_per_sec", 5.7))
+
+    # 원고가 대본을 들고 왔으면 — 지시가 없는 한 늘 그것이다(공짜)
+    say = clean(sl.get("say"))
+    if say and not body.hint.strip():
+        rec = {"srt_text": say, "narration_text": say,
+               "narration_seconds": est_sec(say, cps), "from": "원고"}
+        _save_script(pid, slug, no, cache, rec)
+        return {"ok": True, "no": no, "cost_usd": 0.0, "source": "원고", **rec}
+
+    dec = (cached_data(pid, slug, "s5-decisions") or {}).get("slides", {})
+    frames = (cached_data(pid, slug, "s1-frames") or {}).get("items", {})
+    ovr = ws.load_overrides(pid, slug)
+    budget = budgets(slides, frames, ovr.get("slides", {}),
+                     float(ovr.get("target_min") or 0) * 60)
+
+    system = (APP_DIR / "llm" / "prompts" / "script.md").read_text(encoding="utf-8")
+    brief = build_brief([sl], deck, dec, budget, "")
+    if body.hint.strip():
+        brief += ("\n\n# 사람이 준 지시 — **이걸 최우선으로 따른다**\n"
+                  + body.hint.strip())
+
+    p = ClaudeProvider(
+        model=(doc.get("models") or cfg["models"]).get("script") or cfg["models"]["script"],
+        effort=cfg["effort"].get("script", "high"),
+        allowed_tools=[], max_turns=1, budget_usd=cfg["budget_usd"]["per_stage"],
+    )
+    try:
+        raw = p.structured(system, [{"role": "user", "content": brief}], schema=SCHEMA)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"{type(e).__name__}: {str(e)[:160]}")
+
+    r = next((x for x in (raw.get("slides") or []) if int(x.get("no") or 0) == no), None)
+    srt = clean((r or {}).get("srt_text"))
+    if not srt:
+        raise HTTPException(status_code=502, detail="자막이 비어 돌아왔습니다")
+    nar = clean((r or {}).get("narration_text")) or srt
+    rec = {"srt_text": srt, "narration_text": nar,
+           "narration_seconds": est_sec(nar, cps), "budget_sec": budget.get(no, 0)}
+    _save_script(pid, slug, no, cache, rec)
+    return {"ok": True, "no": no, "cost_usd": round(p.last_cost_usd, 4),
+            "source": "AI", **rec}
+
+
+def _save_script(pid: int, slug: str, no: int, cache: Dict[str, Any],
+                 rec: Dict[str, Any]) -> None:
+    """대본 캐시에 한 칸만 덮어쓴다. 나머지 장은 건드리지 않는다.
+
+    ★ `narration_rev` 를 올린다 — 음성·자막이 이 값을 보고 낡음을 판정한다.
+      안 올리면 대본을 고쳐도 "할 일 없음" 이라 옛 음성이 그대로 남는다.
+    """
+    stage = STAGES["s6-script"]
+    doc = ws.load_project(pid, slug)
+    slides = dict(cache.get("slides") or {})
+    slides[str(no)] = rec
+    write_cache(pid, slug, "s6-script",
+                input_hash=stage.input_hash(pid, slug, doc),
+                data={**cache, "slides": slides},
+                code_version=stage.code_version, model=cache.get("model", ""),
+                cost_usd=0.0, status="ok", warnings=[])
+    doc["narration_rev"] = int(doc.get("narration_rev") or 0) + 1
+    ws.save_project(pid, slug, doc)
+
+
 @app.get("/api/projects/{pid}/verify/{no}")
 def verify_slide(pid: int, no: int) -> Dict[str, Any]:
     """근거 검증 — **이 장이 인용한 경로가 레포에 진짜 있나.**
@@ -373,12 +527,16 @@ def verify_slide(pid: int, no: int) -> Dict[str, Any]:
 def img_prompt(pid: int, no: int) -> Dict[str, Any]:
     """그 장에 넣을 **그림 프롬프트**.
 
-    이미지 에이전트(`260628-로컬이미지_앞에프롬프트필더`)에 그대로 붙여 넣는다.
-    프롬프트를 여기서 보여 주는 이유: 파일(`09_이미지/slides.json`)만 내보내면
-    사람이 그 파일을 열어 해당 번호를 찾아야 한다. 그림을 넣는 자리에서 바로
-    복사되는 게 맞다 — 요청과 납품이 한 화면에 있어야 한다.
+    이미지 스튜디오에 그대로 붙여 넣는다. 프롬프트를 여기서 보여 주는 이유:
+    파일(`09_이미지/이미지프롬프트.json`)만 내보내면 사람이 그 파일을 열어 해당
+    번호를 찾아야 한다. 그림을 넣는 자리에서 바로 복사되는 게 맞다 — 요청과
+    납품이 한 화면에 있어야 한다.
+
+    ★ 지시문은 **여기서 만들지 않는다.** 원장(`09_이미지/원장.json`)에서 꺼내
+      온다. 화면이 보여 주는 것과 파일로 나가는 것이 갈리면 안 되기 때문이다.
+      아직 없으면 「그림 지시문(S3a)을 돌리세요」라고 답한다.
     """
-    from pipeline.s3b_images import STYLE, build_prompt
+    from pipeline.s3a_imgprompt import slide_id
 
     doc = _find(pid)
     slug = doc["slug"]
@@ -386,9 +544,11 @@ def img_prompt(pid: int, no: int) -> Dict[str, Any]:
     sl = next((x for x in (outline.get("slides") or []) if x["no"] == no), None)
     if not sl:
         raise HTTPException(status_code=404, detail=f"{no}번 장이 없습니다")
-    dec = (cached_data(pid, slug, "s5-decisions") or {}).get("slides", {})
-    return {"no": no, "title": sl.get("title") or "",
-            "prompt": build_prompt(sl, dec), "style": STYLE,
+    did = slide_id(slug, sl)
+    e = (ws.load_ledger(pid, slug).get("by_id") or {}).get(did) or {}
+    return {"no": no, "title": sl.get("title") or e.get("title") or "",
+            "data_id": did, "prompt": (e.get("prompt") or "").strip(),
+            "style": (config.load().get("image") or {}).get("negative", ""),
             "file": f"{no:03d}.png"}
 
 
@@ -1275,6 +1435,29 @@ def post_budget(pid: int, body: BudgetIn) -> Dict[str, Any]:
     return {"ok": True, "slide_budget": slide_budget(doc)}
 
 
+class SwapIn(BaseModel):
+    image_swap: bool
+
+
+@app.post("/api/projects/{pid}/image-swap")
+def post_image_swap(pid: int, body: SwapIn) -> Dict[str, Any]:
+    """원고 장의 몸통을 그림 한 판으로 갈아끼울까.
+
+    켜면 그림이 **도착한 장만** 갈린다 — 안 온 장은 글 그대로 나가므로, 27장 중
+    4장만 그려 놓고 켜도 화면이 비지 않는다. 제목·음성·자막·전환은 어느 쪽이든
+    그대로다(그림은 몸통 자리만 차지한다).
+
+    ★ 조립(S8)만 다시 돌리면 된다 — 결정론이라 돈이 안 든다. Claude 단계는
+      아무것도 낡지 않는다. 그래서 켜고 끄며 둘을 견줘 볼 수 있다.
+    """
+    doc = _find(pid)
+    doc["image_swap"] = bool(body.image_swap)
+    # 조립이 이 값을 읽는다 — 바꿨으면 덱이 낡은 것으로 잡혀야 한다
+    doc["overrides_rev"] = int(doc.get("overrides_rev") or 0) + 1
+    ws.save_project(pid, doc["slug"], doc)
+    return {"ok": True, "image_swap": doc["image_swap"]}
+
+
 class VersionIn(BaseModel):
     name: str
     note: str = ""
@@ -1355,20 +1538,23 @@ def get_dist(pid: int) -> Dict[str, Any]:
 
 
 @app.post("/api/projects/{pid}/reveal")
-def reveal(pid: int) -> Dict[str, Any]:
-    """완성 폴더를 탐색기에서 연다.
+def reveal(pid: int, step: str = "dist") -> Dict[str, Any]:
+    """산출물 폴더를 탐색기에서 연다.
 
     ★ 로컬 앱이라서 할 수 있는 일이다. 산출물은 앱 밖에 있고 경로도 길어서,
       "어디에 나왔나" 를 글로 알려 주면 사람이 복사해 붙여넣어야 한다.
 
-    ★ 여는 곳은 **완성 폴더 하나로 고정**한다. 어디를 열지 화면이 정해서
-      보내게 두면(예전엔 rel 을 받았다) 경로 검사·탈출 방어가 딸려 오고,
-      실제로 필요한 곳은 여기 하나뿐이다.
+    ★ `step` 은 **폴더 이름이 아니라 열쇠**다(`ws.STEPS` 의 키). 화면이 경로를
+      보내면 탈출 방어가 딸려 오지만, 열쇠는 아는 것만 열리므로 그 문제가 없다.
+      예전엔 완성 폴더 하나로 고정했는데, 그림을 주고받는 `09_이미지` 도
+      사람이 여는 자리가 됐다(2026-08-14: "직후 만든 폴더를 띄울 수 있는 버튼").
     """
     doc = _find(pid)
-    d = ws.project_dir(pid, doc["slug"], create=False) / ws.STEPS["dist"][0]
+    if step not in ws.STEPS:
+        raise HTTPException(status_code=400, detail=f"모르는 자리: {step}")
+    d = ws.project_dir(pid, doc["slug"], create=False) / ws.STEPS[step][0]
     if not d.is_dir():
-        raise HTTPException(status_code=404, detail="아직 완성본이 없습니다")
+        raise HTTPException(status_code=404, detail=f"아직 {ws.STEPS[step][1]} 폴더가 없습니다")
     try:
         if sys.platform == "win32":
             os.startfile(str(d))                       # noqa: S606
@@ -1379,6 +1565,223 @@ def reveal(pid: int) -> Dict[str, Any]:
     except OSError as e:
         raise HTTPException(status_code=500, detail=f"열지 못했습니다: {e}")
     return {"ok": True, "dir": str(d)}
+
+
+class SpeakIn(BaseModel):
+    text: str = ""
+
+
+@app.post("/api/speak-numbers")
+def speak_numbers_api(body: SpeakIn) -> Dict[str, str]:
+    """발음 칸의 **숫자만** 소리대로 바꿔 돌려준다. 저장은 하지 않는다.
+
+    ★ 화면이 아니라 여기서 바꾸는 이유 — 규칙이 한 벌이어야 한다. 같은 변환이
+      파이썬(대본)과 JS(화면)에 두 벌 있으면 언젠가 서로 다르게 읽는다.
+    """
+    from core import honorific
+    return {"text": honorific.speak_numbers(body.text or "")}
+
+
+# ── 장별 음성 ──────────────────────────────────────────────────────────────
+def _audio_rel(pid: int, slug: str, no: int) -> str:
+    """그 장의 음성 파일 경로(프로젝트 폴더 기준). 없으면 빈 문자열.
+
+    ★ 자리를 새로 정하지 않는다 — **S10 이 적어 둔 것**을 읽는다. 성우 파일이
+      있으면 그것, 없으면 합성본이라는 순서가 거기서 이미 정해졌고, 여기서 또
+      찾으면 두 규칙이 갈려서 화면과 영상이 다른 소리를 낸다.
+    """
+    one = ((cached_data(pid, slug, "s10-tts") or {}).get("slides") or {}).get(str(no))
+    return str((one or {}).get("file") or "")
+
+
+@app.get("/api/projects/{pid}/audio/{no}")
+def get_audio(pid: int, no: int):
+    """그 장의 음성 — **덱 화면의 재생기가 부르는 자리.**
+
+    ★ 이 창구가 없어서 재생기가 계속 404 를 받고 `0:00 / 0:00` 만 띄웠다
+      (2026-08-16 발견: "여기서 왜 음성이 안 나올까요"). 파일도 대본도 멀쩡했고
+      부를 곳이 없었을 뿐이다.
+    """
+    doc = _find(pid)
+    rel = _audio_rel(pid, doc["slug"], no)
+    if not rel:
+        raise HTTPException(status_code=404, detail=f"{no}장 음성이 아직 없습니다")
+    root = ws.project_dir(pid, doc["slug"], create=False).resolve()
+    p = (root / rel).resolve()
+    try:
+        p.relative_to(root)
+    except ValueError:
+        raise HTTPException(status_code=403, detail="폴더 밖")
+    if not p.is_file():
+        raise HTTPException(status_code=404, detail=f"파일이 없습니다: {rel}")
+    from render.resolvers import MIME
+    # ★ 캐시를 걸지 않는다 — 다시 합성하면 **같은 이름에 다른 소리**가 들어온다.
+    #   600초 캐시가 걸려 있으면 고친 발음을 눌러도 옛 소리가 다시 난다.
+    return FileResponse(str(p), media_type=MIME.get(p.suffix.lower(), "audio/wav"),
+                        headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/projects/{pid}/revoice/{no}")
+def revoice(pid: int, no: int) -> Dict[str, Any]:
+    """발음을 고친 그 장만 **다시 합성한다.**
+
+    ★ 전체 합성은 31장에 몇 분이다. 발음 한 군데 고칠 때마다 그걸 돌리면 검수가
+      끝나지 않는다. 여기서 고치고, 여기서 듣고, 여기서 OK 한다.
+    """
+    doc = _find(pid)
+    from pipeline import s10_tts
+    try:
+        r = s10_tts.synth_one(pid, doc["slug"], no)
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    # ★ 길이가 달라졌으면 **자막 시각이 밀린다.** s11 은 start/end 를 누적으로
+    #   들고 있어서, 한 장이 0.1초 짧아지면 그 뒤 장이 전부 어긋난다. 여기서
+    #   몰래 고치지 않고 **화면이 말하게** 한다 — 자막은 공짜(결정론)라 다시
+    #   돌리면 그만이고, 조용히 어긋난 자막이 나가는 쪽이 훨씬 비싸다.
+    old = (((cached_data(pid, doc["slug"], "s11-audio") or {}).get("slides") or {})
+           .get(str(no)) or {}).get("duration_sec")
+    new = r.get("duration_sec")
+    shifted = (old is None or new is None or abs(float(old) - float(new)) > 0.02)
+    return {"ok": True, "no": r["no"], "sec": new, "file": r.get("file"),
+            "was": old, "subtitle_stale": bool(shifted),
+            # 화면이 곧바로 다시 듣게 — 캐시를 피하는 꼬리표를 같이 준다
+            "url": f"/api/projects/{pid}/audio/{no}?v={int(time.time())}"}
+
+
+# ── 모션 리마스터 ──────────────────────────────────────────────────────────
+# ★ 스테이지가 아니다 — 렌더링에서 끝나는 영상도 있다. 자세한 이유는
+#   `pipeline/s13_motion.py` 머리말에 있다.
+@app.get("/api/projects/{pid}/motion")
+def get_motion(pid: int) -> Dict[str, Any]:
+    doc = _find(pid)
+    return motion.state(pid, doc["slug"])
+
+
+@app.post("/api/projects/{pid}/motion/picker")
+def motion_picker(pid: int, force: bool = False) -> Dict[str, Any]:
+    doc = _find(pid)
+    try:
+        job = get_registry().start(
+            project_id=pid, stage="s13-motion", label="마스크 지정기",
+            work=lambda j: motion.run_picker(j, pid, doc["slug"], doc, force=force))
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    return job.to_dict()
+
+
+class ZonesIn(BaseModel):
+    """지정기에서 내려받은 zones.json.
+
+    ★ 슬라이드 그림과 **같은 방식**(base64 JSON)이다 — `python-multipart` 를
+      새로 깔지 않으려는 것. 마스크 파일은 수십 KB 라 넉넉하다.
+    """
+    data_url: str = ""
+    text: str = ""
+
+
+@app.post("/api/projects/{pid}/motion/zones")
+def motion_zones(pid: int, body: ZonesIn) -> Dict[str, Any]:
+    import base64 as _b64
+
+    doc = _find(pid)
+    raw = b""
+    if body.data_url:
+        m = re.match(r"^data:[^;]*;base64,(.+)$", body.data_url, re.S)
+        if not m:
+            raise HTTPException(status_code=400, detail="파일을 읽지 못했습니다")
+        try:
+            raw = _b64.b64decode(m.group(1))
+        except Exception:  # noqa: BLE001
+            raise HTTPException(status_code=400, detail="파일을 읽지 못했습니다")
+    elif body.text:
+        raw = body.text.encode("utf-8")
+    if not raw:
+        raise HTTPException(status_code=400, detail="빈 파일입니다")
+    if len(raw) > 8_000_000:
+        raise HTTPException(status_code=400, detail="8MB 를 넘습니다")
+    try:
+        return motion.save_zones(pid, doc["slug"], raw)
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+# ── 스토리보드 정리 — 장 하나씩 ────────────────────────────────────────────
+@app.get("/api/projects/{pid}/motion/still/{no}")
+def motion_still(pid: int, no: int):
+    """그 장의 **영상 프레임**. 마스킹 상자와 좌표계가 같아야 해서 이걸 깐다.
+
+    ★ 살아 있는 미리보기(iframe)를 깔면 안 된다. 상자 좌표는 1920×1080 영상
+      기준인데 미리보기는 브라우저가 다시 레이아웃해서 픽셀이 어긋난다.
+    """
+    doc = _find(pid)
+    p = motion.still_of(pid, doc["slug"], no)
+    if p is None:
+        raise HTTPException(status_code=404, detail=f"{no}장 스틸이 없습니다")
+    return FileResponse(str(p), media_type="image/png",
+                        headers={"Cache-Control": "public, max-age=3600"})
+
+
+@app.get("/api/projects/{pid}/motion/scene/{no}")
+def motion_scene(pid: int, no: int) -> Dict[str, Any]:
+    """그 장의 상자 + 시각 + 자막 문장. 화면이 이것 하나로 그린다."""
+    doc = _find(pid)
+    return motion.scene_of(pid, doc["slug"], no)
+
+
+class SceneIn(BaseModel):
+    boxes: List[Dict[str, Any]] = []
+    done: Optional[bool] = None
+
+
+@app.post("/api/projects/{pid}/motion/scene/{no}")
+def motion_scene_save(pid: int, no: int, body: SceneIn) -> Dict[str, Any]:
+    """**그 장만** 저장한다 — 나머지 씬은 건드리지 않는다."""
+    doc = _find(pid)
+    try:
+        return motion.save_scene(pid, doc["slug"], no, body.boxes, body.done)
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@app.post("/api/projects/{pid}/motion/scene/{no}/autotime")
+def motion_autotime(pid: int, no: int) -> Dict[str, Any]:
+    """자막 문장 시각으로 상자 시각을 깔아 준다. 저장은 화면이 시킨다."""
+    doc = _find(pid)
+    return {"boxes": motion.autotime(pid, doc["slug"], no)}
+
+
+@app.post("/api/projects/{pid}/motion/order")
+def motion_order(pid: int, no: int = 0) -> Dict[str, Any]:
+    """상자 안 글자를 **읽어서** 대본과 짝짓고 차례를 잡는다.
+
+    ★ `no` 를 주면 그 장만, 안 주면 상자가 있는 장 전부. 돈이 드는 단계라
+      (Claude vision) 명시적으로 눌러야 돈다 — 자동 실행 대상이 아니다.
+    """
+    doc = _find(pid)
+    from pipeline import s13b_order
+    only = [no] if no else None
+    try:
+        job = get_registry().start(
+            project_id=pid, stage="s13b-order",
+            label=f"{no}장 차례 잡기" if no else "차례 잡기",
+            work=lambda j: s13b_order.run(j, pid, doc["slug"], doc, only=only))
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    return job.to_dict()
+
+
+@app.post("/api/projects/{pid}/motion/bake")
+def motion_bake(pid: int, mode: str = "시안", vals: str = "") -> Dict[str, Any]:
+    doc = _find(pid)
+    try:
+        job = get_registry().start(
+            project_id=pid, stage="s13-motion",
+            label="모션 시안" if mode != "전체" else "모션 전체",
+            work=lambda j: motion.run_bake(j, pid, doc["slug"], doc,
+                                           mode=mode, vals=vals))
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    return job.to_dict()
 
 
 @app.get("/api/projects/{pid}/file/{rel:path}")

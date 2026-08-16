@@ -25,7 +25,7 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List
 
-from core import config, workspace as ws
+from core import config, honorific, workspace as ws
 from llm.claude_provider import ClaudeProvider
 from pipeline.registry import STAGES, cached_data, write_cache
 
@@ -161,6 +161,93 @@ def clean(t: str) -> str:
     return MD.sub("", str(t or "")).strip()
 
 
+# ── 여는 말·닫는 말 — **고정한다** ─────────────────────────────────────────
+# ★ 이 두 장만 LLM 에게 안 맡긴다. 인사와 맺음말은 발표마다 달라질 이유가 없는데,
+#   매번 새로 쓰이니 회차마다 말이 달라졌다. 맺음말은 프롬프트가 "감사 인사 대신
+#   **다음 행동**" 을 시켜서 「앞 장부터 순서대로 보시면 흐름이 이어지고요, 궁금한
+#   대목은 목차에서 바로 찾아가시면 됩니다」 같은 안내문이 나갔다 —
+#   짧은 인사면 될 자리다(2026-08-16 지시: "둘 다 간단하게 … 고정화해두게요").
+#
+# ★ 이미 만든 프로젝트에는 **닿지 않는다.** `registry` 의 `code_version` 을 일부러
+#   안 올렸다 — 올리면 s10-tts·s11-audio 까지 낡아 검수 중인 음성을 다시 만든다.
+#
+# ★ 사람이 발음 화면에서 고친 것은 그대로 이긴다. 여기서 덮는 것은 **대본**이고,
+#   손편집은 오버라이드에 따로 얹힌다(`registry.narration_of`).
+#   2026-08-16 에 사람이 확정한 문장이다. 바꾸려면 여기만 고친다.
+
+
+def _chapter(project: Dict[str, Any]) -> tuple:
+    """(책 이름, 장 번호). 번호가 없으면 (이름, None)."""
+    title = str(project.get("title") or "").strip()
+    book = str(project.get("book") or "").strip()
+    m = re.search(r"(\d+)\s*장", title)
+    return book, (int(m.group(1)) if m else None)
+
+
+def _open_lines(project: Dict[str, Any]) -> tuple:
+    """여는 말 — (자막, 발음). **숫자를 갈라 쓴다.**
+
+    ★ 자막은 `19장`, 발음은 `십구 장`이다. TTS 는 발음 대본을 글자 그대로 읽어서
+      `19장` 을 주면 「일구장」으로 나온다(2026-08-16 사람이 손으로 그렇게 갈라
+      넣었다). 자막과 발음이 다른 표기를 갖는 것이 이 앱의 원래 설계다.
+    """
+    title = str(project.get("title") or "").strip()
+    book, n = _chapter(project)
+    head = book or title or "이번 장"
+
+    if book and n:
+        return (f"안녕하세요. {head} {n}장을 시작하겠습니다.",
+                f"안녕하세요. {head} {honorific.sino(n)} 장을 시작하겠습니다.")
+    # 장 번호가 없는 발표 — 제목을 그대로 부른다(받침 보고 을/를)
+    name = f"{book} {title}".strip() or head
+    t = f"안녕하세요. {name}{honorific.josa(name, '을', '를')} 시작하겠습니다."
+    return (t, t)
+
+
+def _close_lines(project: Dict[str, Any]) -> tuple:
+    """닫는 말 — (자막, 발음). 여는 말과 같은 규칙으로 숫자를 가른다.
+
+    ★ 사람이 쓰는 완성형은 「지금까지 새뮤얼슨의 경제학 19장 **거시경제학 개요**
+      였습니다」인데, 그 **주제(거시경제학)는 프로젝트 어디에도 저장돼 있지 않다**
+      (`deck_subtitle` 은 책 이름이고 `sections` 는 「제19장」 하나뿐이다).
+      없는 것을 지어내면 매번 틀린 주제를 소리 내어 읽게 되므로, 여기서는
+      **주제를 빼고** 낸다. 넣고 싶으면 그 장에서 손으로 한 마디 보태면 된다.
+    """
+    book, n = _chapter(project)
+    title = str(project.get("title") or "").strip()
+    if book and n:
+        return (f"지금까지 {book} {n}장 개요였습니다. 들어주셔서 감사합니다.",
+                f"지금까지 {book} {honorific.sino(n)}장 개요였습니다. "
+                f"들어주셔서 감사합니다.")
+    name = f"{book} {title}".strip() or "이번 장"
+    t = f"지금까지 {name} 개요였습니다. 들어주셔서 감사합니다."
+    return (t, t)
+
+
+def _fix_ends(out: Dict[str, Any], slides: List[Dict[str, Any]],
+              project: Dict[str, Any], cps: float, job) -> None:
+    """표지 장과 맺음 장의 대본을 고정 문구로 갈아 끼운다."""
+    op_srt, op_say = _open_lines(project)
+    cl_srt, cl_say = _close_lines(project)
+    fixed = {"cover": (op_srt, op_say), "closing": (cl_srt, cl_say)}
+
+    for s in slides:
+        pair = fixed.get(s.get("kind") or "")
+        if not pair:
+            continue
+        srt, say = pair
+        key = str(s["no"])
+        cur = out.get(key) or {}
+        if (cur.get("srt_text") or "") == srt and (cur.get("narration_text") or "") == say:
+            continue
+        # 이미 하십시오체라 to_polite 를 태우지 않는다
+        out[key] = {**cur, "srt_text": srt, "narration_text": say,
+                    "narration_seconds": est_sec(say, cps),
+                    "budget_sec": cur.get("budget_sec") or 0,
+                    "over_sec": 0, "from": "고정"}
+        job.add_log(f"  {s['no']}장({s.get('kind')}) 고정 문구로 — {srt}")
+
+
 def run(job, pid: int, slug: str, project: Dict[str, Any], *, force: bool = False):
     cfg = config.load()
     stage = STAGES["s6-script"]
@@ -187,6 +274,37 @@ def run(job, pid: int, slug: str, project: Dict[str, Any], *, force: bool = Fals
     #   묶음 하나가 실패해도 나머지는 살아남게 해 뒀는데, 재시도할 때 전부 다시
     #   부르면 실패 하나가 매번 전체 값을 물린다. 실패한 묶음만 채운다.
     prior = (cached_data(pid, slug, "s6-script") or {}).get("slides", {}) if not force else {}
+
+    # ★ **원고가 대본을 들고 왔으면 그것을 쓴다.** 작가 에이전트가 `data-say` 에
+    #   그 장에서 말할 것을 적어 보낸다(`tools/split_sections.mjs` 가 실어 온다).
+    #   그것을 힌트로만 쓰고 Claude 에게 다시 쓰게 하면 두 가지를 잃는다 —
+    #   화면 문구를 쓴 쪽이 말도 같이 썼다는 일관성, 그리고 $1 짜리 호출.
+    #   2026-08-14 실측: 29장에 9,105자(20분)가 이미 원고에 들어 있었는데
+    #   저희는 그걸 버리고 다시 쓰고 있었다.
+    # ★ 자막과 발음이 **같은 글**이 된다. 원고가 발음까지 갈라 주면 그때 나눈다
+    #   (`data-speak` 같은 칸). 그때까지는 숫자·영문을 TTS 가 어떻게 읽는지
+    #   사람이 발음 화면에서 고치면 된다.
+    from_ms: Dict[str, Any] = {}
+    for s in slides:
+        if str(s["no"]) in prior:
+            continue
+        t = clean(s.get("say"))
+        if not t:
+            continue
+        # ★ **발음 대본만 하십시오체로.** 원고는 책에 싣는 글이라 해라체
+        #   (`~이다·~한다`)로 쓰인다. 그대로 읽히면 낭독이 아니라 통보로 들린다.
+        #   자막은 원고 그대로 둔다 — 화면 글과 소리가 서로 다른 표기를 갖는 것이
+        #   이 앱의 원래 설계다(위 모듈 주석의 세 텍스트).
+        spoken = honorific.to_polite(t)
+        from_ms[str(s["no"])] = {
+            "srt_text": t, "narration_text": spoken,
+            "narration_seconds": est_sec(spoken, cps),
+            "budget_sec": budget[s["no"]], "from": "원고",
+        }
+    if from_ms:
+        job.add_log(f"원고가 들고 온 대본 {len(from_ms)}장 — 그대로 씁니다(공짜)")
+    prior = {**prior, **from_ms}
+
     todo = [s for s in slides if str(s["no"]) not in prior]
     if prior:
         job.add_log(f"이미 나온 {len(prior)}장 재사용 · 남은 {len(todo)}장")
@@ -272,6 +390,8 @@ def run(job, pid: int, slug: str, project: Dict[str, Any], *, force: bool = Fals
 
         job.progress(ci, len(chunks), f"{ci}/{len(chunks)}묶음 · ${total_cost:.2f}")
         job.add_log(f"  {ci}/{len(chunks)} {nos} → {got}장 · ${p.last_cost_usd:.3f}")
+
+    _fix_ends(out, slides, project, cps, job)
 
     missing = [s["no"] for s in slides if str(s["no"]) not in out]
     if missing:

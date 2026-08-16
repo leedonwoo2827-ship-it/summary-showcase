@@ -181,5 +181,82 @@ export async function mount(root, ctx) {
         .catch((e) => toast("폴더를 열지 못했습니다: " + e.message, "err"));
     row.appendChild(open);
     out.appendChild(row);
+    showYoutube(out);
   };
+
+  // 이미 구워 둔 프로젝트면 들어오자마자 보여 준다
+  showYoutube(out, {quiet: true});
+}
+
+/* 유튜브에 올릴 글 — 제목·설명·타임스탬프·태그.
+   ★ 영상 파일만 주면 그다음이 막힌다. 올리기 화면이 요구하는 칸을 여기서
+     다 채워 두고, 버튼 하나로 복사되게 한다(2026-08-15 요청).
+
+   ★ **모션 화면도 이걸 그대로 쓴다**(`motion.js`). 영상이 어디서 끝나느냐가
+     프로젝트마다 다르기 때문이다 — 렌더링에서 끝나는 것도 있고 모션까지 가는
+     것도 있고, **올리는 자리에 유튜브 글이 있어야** 한다. 그래서 글이 두 화면에
+     보인다. 만드는 곳은 서버 한 군데(`render/youtube.py`)라 내용은 늘 같다. */
+export async function showYoutube(out, opt = {}) {
+  const pid = state.projectId;
+  if (!pid) return;
+  let r;
+  try {
+    r = await api(`/api/projects/${pid}/youtube`);
+  } catch (e) {
+    if (!opt.quiet) toast("유튜브 글을 만들지 못했습니다: " + e.message, "err");
+    return;
+  }
+  if (!r || !r.text) return;
+  if (opt.quiet) out.hidden = false;
+
+  const box = el("div", "yt-box");
+  const hd = el("div", "yt-hd");
+  hd.appendChild(el("strong", null, "유튜브에 올릴 글"));
+  const cp = el("button", "btn sm");
+  cp.type = "button";
+  cp.append(icon("clipboard", 12), el("span", null, "전체 복사"));
+  cp.onclick = async () => {
+    try {
+      await navigator.clipboard.writeText(r.text);
+      toast("복사했습니다 — 유튜브 올리기 화면에 붙여 넣으세요");
+    } catch {
+      toast("복사하지 못했습니다 — 아래 글을 직접 선택해 주세요", "err");
+    }
+  };
+  hd.appendChild(cp);
+  box.appendChild(hd);
+
+  const ta = el("textarea", "yt-text");
+  ta.readOnly = true;
+  ta.rows = 16;
+  ta.value = r.text;
+  box.appendChild(ta);
+  if (r.file) box.appendChild(el("div", "imgdrop-path", r.file));
+
+  /* ★ 썸네일 지시문 — 슬라이드 그림과 **같은 아홉 칸**이라 이미지 스튜디오에
+     그대로 넣으면 된다. 세 벌(물음형·대비형·글자중심)을 내고 골라 쓰게 한다.
+     경로를 클립보드에 담아 두는 이유는 슬라이드 그림 쪽과 같다 — 스튜디오는
+     「출력 폴더」에 경로를 붙여넣어야 한다. */
+  const bar = el("div", "imgdrop-bar");
+  const th = el("button", "btn");
+  th.type = "button";
+  th.append(icon("image", 14), el("span", null, "썸네일 원고 만들기"));
+  th.onclick = async () => {
+    th.disabled = true;
+    try {
+      const t = await api(`/api/projects/${pid}/youtube/thumb`, {method: "POST", body: {}});
+      try { await navigator.clipboard.writeText(t.dir); } catch { /* 권한 없으면 넘어간다 */ }
+      toast(`썸네일 원고를 만들었습니다 — 폴더 경로를 복사했습니다`);
+      bar.appendChild(el("div", "imgdrop-path", t.file));
+      await api(`/api/projects/${pid}/reveal?step=dist`, {method: "POST", body: {}})
+        .catch(() => { /* 못 열어도 경로는 손에 있다 */ });
+    } catch (e) {
+      toast("썸네일 지시문을 만들지 못했습니다: " + e.message, "err");
+    } finally {
+      th.disabled = false;
+    }
+  };
+  bar.appendChild(th);
+  box.appendChild(bar);
+  out.appendChild(box);
 }

@@ -39,6 +39,13 @@ _STYLE = re.compile(r'<style id="src-css">(.*?)</style>', re.S)
 # {경로: (mtime, 본문)} — 파일이 바뀌면 저절로 다시 읽는다
 _cache: Dict[str, Any] = {}
 
+# ── 그림 줄 ────────────────────────────────────────────────────────────
+# 글자 수로 시간을 재면 안 되는 줄들. `markBlocks()` 가 붙이는 태그 이름이다.
+FIG_TAGS = frozenset(("svg", "figure", "img", "picture"))
+# 그림 한 장을 보는 데 걸리는 시간. `showcase.config.json` 의 `capture.fig_sec`
+# 으로 덮을 수 있다 — 원고를 보고 사람이 조정할 값이라서다.
+FIG_SEC = 3.0
+
 
 def _text(path: Path) -> str:
     key = str(path)
@@ -124,26 +131,68 @@ def block_ats(slide: Dict[str, Any]) -> List[float]:
     return out
 
 
+def _fig_sec() -> float:
+    """설정의 `capture.fig_sec`. 설정을 못 읽어도 이 모듈은 계속 돌아야 한다 —
+    여기는 원고를 읽는 자리고, 설정은 있으면 좋은 것이다."""
+    try:
+        from core import config
+        return float((config.load().get("capture") or {}).get("fig_sec") or FIG_SEC)
+    except Exception:                                   # noqa: BLE001
+        return FIG_SEC
+
+
+def _is_fig(tags: Optional[List[str]], i: int) -> bool:
+    """이 줄이 그림인가. `tags` 를 안 주면 늘 False — 옛 프로젝트가 그대로 돈다."""
+    if not tags or i >= len(tags):
+        return False
+    return str(tags[i]).lower() in FIG_TAGS
+
+
 def auto_ats(chars: List[int], dur: float, *, cps: float = 5.7,
-             min_step: float = 0.8) -> List[float]:
-    """줄 길이에 비례해 등장 시각을 나눈다.
+             min_step: float = 0.8, tags: Optional[List[str]] = None,
+             fig_sec: float = FIG_SEC) -> List[float]:
+    """줄 길이에 비례해 등장 시각을 나눈다. **그림 줄만 빼고.**
 
     `dur` 이 있으면(음성이 붙었거나 대본 길이를 알면) 그 안에 다 들어가게 맞추고,
     없으면 초당 글자 수로 어림한다. 어느 쪽이든 **줄 사이 최소 간격**은 지킨다 —
     짧은 줄 세 개가 같은 초에 우르르 뜨면 순서대로 나오는 의미가 없다.
+
+    ★ **그림 줄은 글자 수로 재지 않는다.** 그림은 읽는 게 아니라 보는 것이라
+      글자 수와 보는 시간이 아무 상관이 없다. 그런데 `<svg>` 의 `textContent` 는
+      라벨을 다 세므로, 책 원고에서는 그림 한 줄이 **글줄보다 글자가 많다**
+      (2026-08-14 실측: 그림 중앙값 81~93자 · 글줄 34자). 비례로 나누면 그림
+      하나가 그 장 시간의 **40%**(최대 58%)를 가져가고 글줄이 쪼그라든다.
+      바닥값만 올려서는 안 고쳐진다 — 이미 바닥보다 한참 위이기 때문이다.
+      그래서 그림 몫을 **먼저 떼어 두고**, 남은 시간만 글줄끼리 나눈다.
+
+    ★ 짝이 있다 — `tools/split_sections.mjs` 의 등장 시각 배분. 한쪽을 고치면
+      다른 쪽도 고쳐야 한다. 원고를 브라우저로 열어 본 리듬과 발표에서 뜨는
+      리듬이 달라지면, 사람이 눈으로 확인한 것이 확인이 아니게 된다.
     """
     n = len(chars)
     if n == 0:
         return []
-    span = [max(min_step, c / max(cps, 0.1)) for c in chars]
-    total = sum(span)
-    if dur and dur > 0 and total > 0:
-        # 마지막 줄이 끝나기 전에 뜨도록 살짝 당긴다(끝나자마자 뜨면 못 읽는다)
-        span = [x * (dur * 0.88) / total for x in span]
+    fig = [_is_fig(tags, i) for i in range(n)]
+    span = [fig_sec if fig[i] else max(min_step, c / max(cps, 0.1))
+            for i, c in enumerate(chars)]
+
+    if dur and dur > 0:
+        # 그림은 고정으로 빼 두고 **글줄만** 남은 시간에 맞춘다. 그림까지 같이
+        # 줄이면 「그림에 3초」가 장마다 다른 값이 되어 못박은 뜻이 없어진다.
+        budget = dur * 0.88          # 마지막 줄이 끝나기 전에 뜨도록 살짝 당긴다
+        fixed = sum(span[i] for i in range(n) if fig[i])
+        flow = sum(span[i] for i in range(n) if not fig[i])
+        # 그림만으로 예산을 다 먹는 장(그림 한 줄뿐인 장)에는 억지로 자리를
+        # 만들지 않는다 — 아래 바닥값이 받아 준다.
+        left = max(0.0, budget - fixed)
+        if flow > 0 and left > 0:
+            k = left / flow
+            span = [span[i] if fig[i] else span[i] * k for i in range(n)]
+
     out, t = [], 0.0
-    for x in span:
+    for i, x in enumerate(span):
         out.append(round(t, 1))
-        t += max(min_step, x)
+        t += max(fig_sec if fig[i] else min_step, x)
     return out
 
 
@@ -167,7 +216,8 @@ def resolve(s: Dict[str, Any]) -> None:
     #   된다. 알고도 옛 어림값을 쓰면 음성은 40초인데 줄은 20초에 다 떠 버리고
     #   남은 20초를 빈 화면으로 보낸다.
     if dur > 0 and chars:
-        s["html_at_default"] = auto_ats(chars, dur)
+        s["html_at_default"] = auto_ats(chars, dur, tags=s.get("html_tags"),
+                                        fig_sec=_fig_sec())
     s["html_times"] = block_ats(s)
 
 

@@ -77,6 +77,9 @@ ASSETS = "assets"          # 11_완성/assets/
 F_PROJECT = "project.json"
 F_DECK = "deck.json"
 F_OVERRIDES = "deck.overrides.json"
+F_LEDGER = "원장.json"
+# 기계가 읽는 것을 치워 두는 자리. 사람이 여는 폴더에는 집어야 할 파일만 남긴다.
+BAK = "bak"
 
 _BAD = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _ASCII_BAD = re.compile(r"[^a-z0-9-]+")
@@ -193,6 +196,43 @@ def save_project(pid: int, slug_name: str, doc: Dict[str, Any]) -> Path:
     doc["id"] = int(pid)
     doc["updated_at"] = _now()
     return write_json(project_path(pid, slug_name, create=True), doc)
+
+
+# ── 그림 프롬프트 원장 ──────────────────────────────────────────────────────
+def ledger_path(pid: int, slug_name: str, *, create: bool = False) -> Path:
+    """이미지 프롬프트 원장. **이름표(`data_id`)가 키다** — 슬라이드 번호가 아니다.
+
+    번호는 앞에 장 하나만 끼어들어도 전부 밀린다(`005.png` 가 남의 장 그림이 된다).
+    이름표는 안 밀린다. 그래서 프롬프트는 이름표에 매달고 **번호는 내보낼 때만**
+    매긴다.
+
+    ★ `bak/` 안에 둔다. 이 폴더는 **사람이 여는 자리**고(이미지 스튜디오와의 접점),
+      열었을 때 집어야 할 파일이 하나로 보여야 한다. 원장은 기계가 읽는 장부라
+      사람이 열 일이 없다(2026-08-14 지적: "초심자가 보면 모르니 필요없는건 bak 안으로").
+    """
+    d = step_dir(pid, slug_name, "images", create=create)
+    if create:
+        (d / BAK).mkdir(parents=True, exist_ok=True)
+    return d / BAK / F_LEDGER
+
+
+def load_ledger(pid: int, slug_name: str) -> Dict[str, Any]:
+    p = ledger_path(pid, slug_name)
+    if not p.is_file():
+        # 예전 자리(폴더 바로 밑)에 있던 원장을 그대로 읽는다 — 못 읽으면 모든 장이
+        # 새 장으로 잡혀 이미 그린 그림이 통째로 「다시 그릴 것」이 된다.
+        old = step_dir(pid, slug_name, "images", create=False) / F_LEDGER
+        if old.is_file():
+            return read_json(old, {}) or {}
+    return read_json(p, {}) or {}
+
+
+def save_ledger(pid: int, slug_name: str, doc: Dict[str, Any]) -> Path:
+    out = write_json(ledger_path(pid, slug_name, create=True), doc)
+    old = step_dir(pid, slug_name, "images", create=False) / F_LEDGER
+    if old.is_file():
+        old.unlink(missing_ok=True)          # 옛 자리에 한 벌 더 남기지 않는다
+    return out
 
 
 # ── 덱 ─────────────────────────────────────────────────────────────────────

@@ -132,7 +132,12 @@ def run(job, pid: int, slug: str, project: Dict[str, Any], *, force: bool = Fals
 
     # ── 3) 이어 붙이기 ───────────────────────────────────────────────────
     job.progress(2, 3, "이어 붙이기")
-    out_path = dist / f"{ws.ascii_slug(slug)}.mp4"
+    # ★ 두 판이 **나란히 남는다.** 글이 한 줄씩 뜨는 판과 그림 한 판으로 갈아낀
+    #   판은 같은 덱의 두 얼굴이고, 사람이 둘을 견줘 보고 고른다. 같은 이름으로
+    #   내면 나중에 구운 것이 앞엣것을 덮어써서 견줄 수가 없다(2026-08-14 요청:
+    #   "html 영상도 만들 수 있고 이미지로 갈음한 영상도 만들 수 있고").
+    swap = any(s.get("image_swap") for s in slides)
+    out_path = dist / f"{ws.ascii_slug(slug)}{'-img' if swap else ''}.mp4"
     ok, err = ff.concat(segments, out_path)
     if not ok:
         raise RuntimeError(f"이어 붙이기 실패: {err[:300]}")
@@ -148,6 +153,28 @@ def run(job, pid: int, slug: str, project: Dict[str, Any], *, force: bool = Fals
     extra = f" · 컷 {n_cuts}" if n_cuts > len(segments) else ""
     job.add_log(f"영상 완료 · {len(segments)}장{extra} · {total_sec / 60:.1f}분 · {mb:.1f}MB")
     job.add_log(f"파일: {out_path}")
+
+    # ★ 영상만 나오면 그다음이 막힌다 — 유튜브 올리기 화면은 제목·설명·태그를
+    #   요구하고, 그 재료는 덱에 이미 다 있다(장 제목이 챕터, `start_sec` 이
+    #   타임스탬프). 여기서 같이 내면 사람이 다시 쓸 일이 없다.
+    try:
+        from render import youtube
+        txt = youtube.build(deck, title=(project.get("title") or slug),
+                            led=(ws.load_ledger(pid, slug).get("by_id") or {}),
+                            book=str(project.get("book") or ""))
+        led = ws.load_ledger(pid, slug).get("by_id") or {}
+        if txt:
+            p_yt = ws.write_text(dist / "유튜브.txt", txt)
+            job.add_log(f"유튜브 글: {p_yt}")
+        # 썸네일 원고 — 이미지 스튜디오의 «프롬프트 생성기» 가 받는 것은 JSON 이
+        # 아니라 원고 파일이다. 거기에 끌어다 놓고 「배너·썸네일 · 1컷」 만 고르면 된다.
+        p_th = ws.write_text(dist / "유튜브썸네일-원고.txt",
+                             youtube.thumb_md(deck, title=(project.get("title") or slug),
+                                              led=led, book=str(project.get("book") or "")))
+        job.add_log(f"썸네일 원고: {p_th}")
+    except Exception as e:                      # noqa: BLE001
+        # 영상은 이미 나왔다 — 곁다리가 실패해도 그것까지 실패로 만들지 않는다
+        job.add_log(f"유튜브 글은 못 만들었습니다: {type(e).__name__}: {e}")
 
     return write_cache(pid, slug, "s12-video",
                        input_hash=stage.input_hash(pid, slug, project),

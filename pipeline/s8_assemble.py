@@ -24,7 +24,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
 
-from core import htmldoc, workspace as ws
+from core import config, htmldoc, workspace as ws
 from pipeline.registry import ORDER, STAGES, cached_data, read_cache, write_cache
 
 MD = re.compile(r"[*_`#>]|^\s*[-•]\s+", re.M)
@@ -56,6 +56,12 @@ def compose(pid: int, slug: str, project: Dict[str, Any]) -> tuple[Dict[str, Any
     slides_in = outline.get("slides") or []
     if not slides_in:
         raise RuntimeError("구조 설계(s2b-outline)를 먼저 돌리세요")
+
+    # 원고 장의 몸통을 그림 한 판으로 갈아끼울까. **기본은 꺼짐** — 켜기 전까지
+    # 지금까지 나온 덱과 한 글자도 다르지 않게 돈다. 프로젝트가 설정보다 세고,
+    # 장별 손편집(`overrides.slides.N.image_swap`)이 그보다 더 세다(아래 병합).
+    _cfg_swap = bool((config.load().get("image") or {}).get("swap"))
+    swap_on = bool(project.get("image_swap", _cfg_swap))
 
     caps = (cached_data(pid, slug, "s3-caption") or {}).get("items", {})
     imgs = (cached_data(pid, slug, "s3b-images") or {}).get("images", {})
@@ -113,6 +119,9 @@ def compose(pid: int, slug: str, project: Dict[str, Any]) -> tuple[Dict[str, Any
         s: Dict[str, Any] = {
             "no": no, "section": sl.get("section"), "kind": sl.get("kind"),
             "media_kind": sl.get("media_kind"), "title": title,
+            # 원고가 준 이름표 — 그림 원장이 이것으로 프롬프트를 찾는다(S3a·S3b).
+            # 번호는 아래에서 1..N 으로 다시 매겨지지만 이것은 안 바뀐다.
+            "data_id": sl.get("data_id") or "", "say": sl.get("say") or "",
             "body": body, "evidence": ev[:6],
             "video_id": sl.get("video_id"), "frames": [], "image": "",
             # 무음 영상 편집 — 구간·배속·삭제. 사람이 편집 화면에서 정하고
@@ -155,14 +164,18 @@ def compose(pid: int, slug: str, project: Dict[str, Any]) -> tuple[Dict[str, Any
             s["html_at_default"] = [float(x) for x in (sl.get("html_at_default") or [])]
             s["html"] = htmldoc.section(p, int(sl.get("html_sec") or 0)) if p else ""
             s["html_chars"] = [int(x) for x in (sl.get("html_chars") or [])]
+            # 줄 종류 — `htmldoc.resolve()` 가 그림 줄만 고정 시간으로 뺄 때 본다
+            s["html_tags"] = [str(x) for x in (sl.get("html_tags") or [])]
             if p:
                 # 원본 문서 스타일 — 덱 전체에 **한 번만** 넣는다(아래 deck 조립).
                 styles.setdefault(str(rel), htmldoc.style(p))
             elif rel:
                 warn.append(f"{no}번 장: 원고를 못 찾음 — {rel}")
 
-        if sl.get("media_kind") == "text_image":
+        if sl.get("media_kind") in ("text_image", "html"):
             # ★ 한 장에 여러 그림. `image` 는 첫 장(예전 화면 호환), `images` 가 전부다.
+            # ★ `html` 장에도 붙인다. 붙이기만 하고 **쓸지 말지는 렌더러가 정한다**
+            #   (`image_swap`). 여기서 거르면 그림이 와 있는지조차 화면에서 알 수 없다.
             got = imgs.get(key) or {}
             shots = [keep(x.get("file")) for x in (got.get("shots") or [])]
             shots = [x for x in shots if x]
@@ -171,6 +184,14 @@ def compose(pid: int, slug: str, project: Dict[str, Any]) -> tuple[Dict[str, Any
                 shots = [one] if one else []
             s["images"] = shots
             s["image"] = shots[0] if shots else ""
+            if sl.get("media_kind") == "html":
+                # ★ **의도와 결과를 가른다.** `image_swap` 은 "이 장은 그림으로
+                #   갈 장이다" 라는 **작정**이고, 그림이 아직 안 왔어도 참이다.
+                #   실제로 갈아끼우는 것은 렌더러가 정한다(그림이 있을 때만).
+                #   둘을 한 값으로 합쳐 두면 「그림 기다리는 장」이 화면 어디에도
+                #   안 보인다 — 그림이 와야 비로소 유형이 생기니까(2026-08-14 지적:
+                #   "수정 유형이 애시당초 달라야겠어요").
+                s["image_swap"] = bool(swap_on)
 
         # ★ 손편집이 마지막에 이긴다
         for k, v in (ov.get(key) or {}).items():

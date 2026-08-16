@@ -44,6 +44,8 @@ const routes = [
   { re: /^\/video$/,  nav: "vid", layer: "base", load: () => import("./video.js") },
   { re: /^\/deck$/,   nav: "dck", layer: "base", load: () => import("./deck.js") },
   { re: /^\/mp4$/,    nav: "mp4", layer: "base", load: () => import("./mp4.js") },
+  /* 모션 — 렌더링 **다음**이지만 필수는 아니다. 완성 mp4 를 재료로 다시 굽는다. */
+  { re: /^\/motion$/, nav: "mtn", layer: "base", load: () => import("./motion.js") },
 
   // 부유 패널(위층) — 고르는 곳.
   // railed:false = 패널 안쪽 세로 서브레일을 쓰지 않는다. 안 쓰는데 켜 두면
@@ -58,7 +60,7 @@ const routes = [
 
 const HOME = routes[0];
 // 프로젝트가 골라져야 열리는 화면 — 레일에서 잠근다.
-const NEEDS_PROJECT = new Set(["brd", "otl", "txt", "htm", "img", "vid", "dck", "mp4"]);
+const NEEDS_PROJECT = new Set(["brd", "otl", "txt", "htm", "img", "vid", "dck", "mp4", "mtn"]);
 
 function parseHash() {
   let raw = (location.hash || "#/board").slice(1) || "/board";

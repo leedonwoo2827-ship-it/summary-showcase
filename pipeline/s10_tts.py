@@ -23,7 +23,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from core import config, workspace as ws
-from pipeline.registry import STAGES, cached_data, narration_of, write_cache
+from pipeline.registry import (STAGES, cache_path, cached_data, narration_of,
+                               read_cache, write_cache)
 
 APP = Path(__file__).resolve().parent.parent
 BRIDGE = APP / "scripts" / "tts_bridge.py"
@@ -85,6 +86,85 @@ def _calibrate(script: Dict[str, Any], measured: Dict[str, Any]) -> Optional[flo
     if sec < 20 or ch < 100:
         return None                 # 표본이 적으면 건드리지 않는다
     return round(ch / sec, 2)
+
+
+def _bridge(job_spec: Dict[str, Any], work: Path, eng: Dict[str, str]) -> Dict[str, Any]:
+    """합성기를 한 번 돌린다 — **파일로만 대화한다.**
+
+    전체 합성(`run`)과 한 장 다시 합성(`synth_one`)이 같이 쓴다. 두 벌로 두면
+    보이스·속도·스텝수가 갈려서 **다시 합성한 한 장만 목소리가 달라진다.**
+    """
+    job_p, res_p = work / "_tts_job.json", work / "_tts_result.json"
+    ws.write_json(job_p, job_spec)
+    if res_p.exists():
+        res_p.unlink()
+    cmd = [eng["python"], str(BRIDGE), str(job_p), str(res_p)]
+    proc = subprocess.run(cmd, cwd=str(APP), capture_output=True, text=True,
+                          encoding="utf-8", errors="replace",
+                          timeout=eng["timeout_ms"] / 1000)
+    res = ws.read_json(res_p, {}) or {}
+    if not res and proc.returncode != 0:
+        res = {"error": (proc.stdout or proc.stderr or "")[-400:]}
+    return res
+
+
+def synth_one(pid: int, slug: str, no: int) -> Dict[str, Any]:
+    """**그 장만** 다시 합성한다 — 발음을 고치고 그 자리에서 들어 보려고.
+
+    ★ 전체 합성은 31장에 몇 분이 걸린다. 발음 한 군데를 고칠 때마다 그걸 다시
+      돌리면 검수가 끝나지 않는다(2026-08-16 요청: "발음을 변경하면 재생성할 수
+      있고, 그것도 다시 들을 수 있게").
+
+    ★ 읽는 글은 **손편집을 얹은 것**이다(`narration_of`). 화면에서 고친 발음이
+      곧바로 소리가 되어야 고친 보람이 있다.
+
+    ★ 스테이지 캐시의 그 장 칸만 갈아 끼우고 **`input_hash` 는 건드리지 않는다.**
+      낡음 판정은 이 함수가 할 일이 아니다 — 발음을 고쳤으면 `narration_rev` 가
+      이미 s10 을 낡게 만들어 두었고, 그것이 "나머지 장도 다시 봐야 한다" 는
+      정직한 신호다.
+    """
+    cfg = config.load()
+    eng = find_engine(cfg)
+    if eng is None:
+        raise RuntimeError("음성 엔진이 설정되어 있지 않습니다 "
+                           "(showcase.config.local.json 의 tts)")
+    sc = (narration_of(pid, slug) or {}).get(str(no)) or {}
+    text = (sc.get("text") or sc.get("srt_text") or "").strip()
+    if not text:
+        raise RuntimeError(f"{no}장에 읽을 글이 없습니다 — 발음 칸을 채우세요")
+
+    project = ws.load_project(pid, slug)
+    nar = dict(cfg["narration"], **(project.get("narration") or {}))
+    tts_dir = ws.sub_dir(pid, slug, "audio", "tts")
+    step_name = ws.STEPS["audio"][0]
+
+    res = _bridge({
+        "out_dir": str(tts_dir),
+        "voicewright_dir": eng["voicewright_dir"],
+        "assets_dir": eng["assets_dir"],
+        "voice": nar.get("voice", "F2"), "speed": nar.get("speed", 1.0),
+        "total_step": nar.get("total_step", 8),
+        "items": [{"no": int(no), "text": text}],
+    }, ws.cache_dir(pid, slug), eng)
+
+    if res.get("error"):
+        raise RuntimeError("엔진 오류: " + str(res["error"])[-300:])
+    items = [r for r in (res.get("items") or []) if str(r.get("no")) == str(no)]
+    if not items:
+        raise RuntimeError("합성기가 아무것도 내놓지 않았습니다")
+    r = items[0]
+    if r.get("error"):
+        raise RuntimeError(str(r["error"])[:300])
+
+    rel = f"{step_name}/tts/{r.get('file')}"
+    one = {"source": "tts", "duration_sec": r.get("sec"), "file": rel}
+
+    # 캐시의 그 칸만 고쳐 쓴다 — envelope(해시·비용·시각)는 그대로 둔다
+    env = read_cache(pid, slug, "s10-tts")
+    if env is not None:
+        env.setdefault("data", {}).setdefault("slides", {})[str(no)] = one
+        ws.write_json(cache_path(pid, slug, "s10-tts"), env)
+    return {**one, "no": int(no), "text": text}
 
 
 def run(job, pid: int, slug: str, project: Dict[str, Any], *, force: bool = False):

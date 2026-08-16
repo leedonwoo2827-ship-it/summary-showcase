@@ -191,14 +191,27 @@ _DEFS: List[Stage] = [
     Stage("s7-copy", "슬라이드 문구", "deck", "claude",
           deps=["s2b-outline", "s5-decisions"], prompt="copy.md",
           reads=["slide_tone", "models"], code_version=1),
+    # ★ `_fix_ends`(표지·맺음 고정 문구)를 넣었지만 **code_version 은 올리지
+    #   않는다.** 올리면 s6 가 낡고, 그 데이터를 물고 있는 s10-tts·s11-audio 까지
+    #   같이 낡아 **이미 검수 중인 음성을 다시 만들게** 된다(2026-08-16: 씬마다
+    #   오디오를 듣고 발음 원고를 확정하는 중이었다). 새 프로젝트는 처음 돌 때
+    #   자동으로 고정 문구를 받는다. 이미 만든 프로젝트에 적용하고 싶으면 그때
+    #   이 숫자를 올리거나 s6 를 강제로 다시 돌린다 — 나머지 장은 캐시에서
+    #   나오므로 돈은 안 든다.
     Stage("s6-script", "내레이션 대본", "script", "claude",
           deps=["s2b-outline", "s5-decisions"], prompt="script.md",
           reads=["items", "narration", "language", "models"], code_version=1),
+    # ★ 그림 지시문과 그림 받기를 **가른다.** 지시문 쓰기는 Claude 를 부르고
+    #   (돈이 든다 · 자동 실행하면 안 된다), 받기는 결정론이라 낡으면 저절로
+    #   돈다. 한 단계에 묶으면 그림 한 장 넣을 때마다 지시문을 다시 사게 된다.
+    Stage("s3a-imgprompt", "그림 지시문", "images", "claude",
+          deps=["s2b-outline"], prompt="imgprompt.md",
+          reads=["title", "models"], code_version=1),
     # 그림은 **다른 앱**이 만든다(ChatGPT OAuth). 여기는 프롬프트를 내보내고
     # 번호로 되받기만 한다 — 두 앱을 코드로 잇지 않는다.
     Stage("s3b-images", "슬라이드 이미지", "images", "det",
-          deps=["s2b-outline", "s5-decisions"],
-          reads=["title"], code_version=1),
+          deps=["s2b-outline", "s5-decisions", "s3a-imgprompt"],
+          reads=["title"], code_version=2),
     # ★ 둘 다 `narration_rev` 를 읽는다 — **손으로 고친 대본이 낡음의 이유다.**
     #   LLM 은 대본을 처음 만들 때만 쓰고, 발음을 발음기호로 고쳐 쓰거나 자막
     #   문장을 다듬는 일은 그다음에 온다. 그때 다시 만들 것은 음성과 자막이다.
@@ -214,7 +227,9 @@ _DEFS: List[Stage] = [
           deps=["s2b-outline", "s3-caption", "s5-decisions", "s7-copy",
                 "s6-script", "s3b-images", "s11-audio"],
           # overrides_rev — 손편집이 조립을 낡게 만든다(위 server.py 참고)
-          reads=["title", "slug", "live_url", "items", "brand", "overrides_rev"],
+          # image_swap — 그림으로 갈아끼우기를 켜고 끄면 덱이 통째로 달라진다
+          reads=["title", "slug", "live_url", "items", "brand", "overrides_rev",
+                 "image_swap"],
           code_version=2),
     # `bgm` — 배경음악을 갈아 끼우면 완성본만 다시 구우면 된다. 조립(s8)은
     # 배경음악을 모르므로 여기서만 읽는다. 결정론이라 돈이 들지 않는다.

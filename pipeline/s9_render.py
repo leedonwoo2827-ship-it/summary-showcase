@@ -184,7 +184,11 @@ def run(job, pid: int, slug: str, project: Dict[str, Any], *, force: bool = Fals
     #   를 매번 물어야 했다. 통째로 올리면 되는 폴더 하나로 만든다.
     #   압축은 안 한다 — 로컬로 건넬 때 사람이 우클릭으로 묶는 게 더 빠르다.
     job.progress(0, 3, "웹 폴더")
-    web = dist / ws.ascii_slug(slug)
+    # ★ 그림으로 갈아낀 판은 **이름을 갈라 낸다** — 글 판과 나란히 남아야 둘을
+    #   견줄 수 있다. 같은 이름이면 나중에 구운 것이 앞엣것을 덮어쓴다(S12 도 같다).
+    name = ws.ascii_slug(slug) + (
+        "-img" if any(s.get("image_swap") for s in (deck.get("slides") or [])) else "")
+    web = dist / name
     if web.is_dir():
         shutil.rmtree(web, ignore_errors=True)
     web.mkdir(parents=True, exist_ok=True)
@@ -222,7 +226,7 @@ def run(job, pid: int, slug: str, project: Dict[str, Any], *, force: bool = Fals
     for n in sr.notes[:4]:
         warn.append("단일: " + n)
 
-    single = dist / f"{ws.ascii_slug(slug)}.html"
+    single = dist / f"{name}.html"      # 그림 판이면 `-img` 가 붙는다(위 참고)
     ws.write_text(single, one)
     mb = single.stat().st_size / 1e6
     limit = float((cfg.get("render") or {}).get("max_single_file_mb", 10))

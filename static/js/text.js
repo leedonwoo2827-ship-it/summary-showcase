@@ -260,6 +260,10 @@ export async function mount(root, ctx) {
     const vout = el("span", "llm-vout");
     const btnTitle = mkBtn("제목만 다시", "refresh");
     const btnBody = mkBtn("본문만 다시", "refresh");
+    /* ★ 대본에도 「한 장만 다시」를 둔다. 제목·본문에는 있는데 대본에만 없어서,
+       한 장이 마음에 안 들면 31장을 통째로 다시 돌려야 했다(2026-08-14 지적).
+       원고가 `data-say` 로 대본을 보내 왔으면 그것부터 공짜로 넣어 준다. */
+    const btnScript = mkBtn("자막·발음 다시", "refresh");
     const btnVerify = mkBtn("근거 검증", "check");
     const okb = el("button", "btn sm ok-force");
     okb.type = "button";
@@ -285,7 +289,7 @@ export async function mount(root, ctx) {
       toast(s.drop ? `${s.no}번을 뺐습니다 — 굽기 전까지 되돌릴 수 있습니다`
                    : `${s.no}번을 되돌렸습니다`);
     };
-    row.append(btnTitle, btnBody, btnVerify, dropb, okb, vout);
+    row.append(btnTitle, btnBody, btnScript, btnVerify, dropb, okb, vout);
 
     const llm = el("div", "llmbar");
     llm.append(hint, tone, bigBtn);
@@ -324,6 +328,32 @@ export async function mount(root, ctx) {
     bigBtn.onclick = () => recopy(null);
     btnTitle.onclick = () => recopy("title");
     btnBody.onclick = () => recopy("body");
+
+    btnScript.onclick = async () => {
+      const all = [bigBtn, btnTitle, btnBody, btnScript, btnVerify];
+      all.forEach((b) => (b.disabled = true));
+      const lb = btnScript.querySelector("span");
+      const was = lb.textContent;
+      lb.textContent = "쓰는 중…";
+      try {
+        const r = await api(`/api/projects/${state.projectId}/rescript/${s.no}`,
+                            {method: "POST", body: {hint: hint.value}});
+        sin.value = r.srt_text || "";
+        pin.value = r.narration_text || "";
+        autoSize(sin); autoSize(pin); showNlen();
+        s.narration = {...(s.narration || {}),
+                       srt_text: r.srt_text, text: r.narration_text};
+        reload();
+        toast(r.source === "원고"
+              ? "원고에 있던 대본을 넣었습니다 (공짜)"
+              : `대본을 다시 썼습니다 · $${(r.cost_usd || 0).toFixed(3)}`);
+      } catch (e) {
+        toast("대본을 쓰지 못했습니다: " + e.message, "err");
+      } finally {
+        all.forEach((b) => (b.disabled = false));
+        lb.textContent = was;
+      }
+    };
     hint.onkeydown = (e) => { if (e.key === "Enter") recopy(null); };
 
     btnVerify.onclick = async () => {

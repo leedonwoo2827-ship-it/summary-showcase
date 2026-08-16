@@ -24,14 +24,116 @@ export const meta = {
   title: "원고 HTML",
   subtitle: "줄마다 몇 초에 뜰지 정합니다. 왼쪽은 그 순간의 실제 화면입니다",
   actions: () => {
+    /* ★ 그림 지시문을 여기서 만든다 — **목차가 확정된 뒤**라야 하기 때문이다.
+       그림 파일은 번호로 이름이 붙는다(`003.png` = 3번 장). 번호가 아직 흔들리는
+       자리에 이 버튼을 두면, 만들어 둔 지시문이 다음 장 것이 되어 버린다.
+       두 단계를 이어서 돈다 — 지시문을 원장에 채우고(S3a), 아홉 칸 JSON 으로
+       내보낸다(S3b). 원고가 `data-img` 를 들고 왔으면 S3a 는 Claude 를 안 부른다. */
+    const mk = el("button", "btn");
+    mk.type = "button";
+    mk.append(icon("image", 14), el("span", null, "이미지 JSON 만들기"));
+    mk.onclick = () => makePrompts(mk);
+
+    /* ★ **받는 버튼을 따로 둔다.** 예전에는 한 버튼이 내보내기와 받기를 겸했는데,
+       그림을 만들어 놓고도 "뭘 눌러야 붙나" 를 매번 물어야 했다(2026-08-14).
+       두 일은 시점이 다르다 — 내보내기는 그림 만들기 **전**, 받기는 **후**다. */
+    const ld = el("button", "btn primary");
+    ld.type = "button";
+    ld.append(icon("download", 14), el("span", null, "만든 이미지 불러오기"));
+    ld.onclick = () => loadImages(ld);
+
     const a = el("a", "btn");
     a.href = "/preview/" + (state.projectId || 0);
     a.target = "_blank";
     a.rel = "noopener";
     a.append(icon("slide", 14), el("span", null, "슬라이드 보기"));
-    return [a];
+    return [mk, ld, a];
   },
 };
+
+/* 그림 폴더를 다시 훑어 장에 붙이고, 덱까지 조립한다.
+   ★ 조립까지 하는 이유: 붙이기만 하면 화면이 그대로라 "안 됐다" 로 보인다.
+     둘 다 결정론이라 Claude 를 안 부르고 돈이 들지 않는다. */
+async function loadImages(btn) {
+  const pid = state.projectId;
+  if (!pid) return;
+  const was = btn.innerHTML;
+  btn.disabled = true;
+  try {
+    for (const [key, what] of [["s3b-images", "그림 찾는 중"],
+                               ["s8-assemble", "덱에 붙이는 중"]]) {
+      btn.textContent = what + "…";
+      let j = await api(`/api/projects/${pid}/stages/${key}/run`,
+                        { method: "POST", body: { force: true } });
+      while (j.status === "running" || j.status === "queued") {
+        await new Promise((r) => setTimeout(r, 700));
+        j = await api(`/api/jobs/${j.job_id}`);
+      }
+      if (j.status === "error") throw new Error((j.log || []).slice(-1)[0] || key);
+    }
+    const d = await api(`/api/projects/${pid}/stages/s3b-images`).catch(() => null);
+    const got = Object.keys((d && d.data && d.data.images) || {}).length;
+    const need = ((d && d.data && d.data.targets) || []).length;
+    if (!got) {
+      toast(`아직 그림이 없습니다 — 09_이미지 폴더에 002.png 처럼 넣어 주세요`);
+    } else {
+      toast(`그림 ${got}/${need}장이 붙었습니다 — «슬라이드 보기» 로 확인하세요`);
+    }
+  } catch (e) {
+    toast("실패: " + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = was;
+  }
+}
+
+/* 두 단계를 차례로 돌리고, 끝나면 **어디에 무엇이 생겼는지**를 말한다.
+   파일 경로를 안 알려 주면 사람이 폴더를 뒤져야 한다 — 이 앱과 이미지 스튜디오의
+   접점은 폴더 하나뿐이라, 그 폴더가 어디인지가 곧 사용법이다. */
+async function makePrompts(btn) {
+  const pid = state.projectId;
+  if (!pid) return;
+  const was = btn.innerHTML;
+  btn.disabled = true;
+  try {
+    for (const [key, what] of [["s3a-imgprompt", "지시문 쓰는 중"],
+                               ["s3b-images", "JSON 내보내는 중"]]) {
+      btn.textContent = what + "…";
+      const job = await api(`/api/projects/${pid}/stages/${key}/run`,
+                            { method: "POST", body: {} });
+      let j = job;
+      while (j.status === "running" || j.status === "queued") {
+        await new Promise((r) => setTimeout(r, 700));
+        j = await api(`/api/jobs/${j.job_id}`);
+      }
+      if (j.status === "error") throw new Error((j.log || []).slice(-1)[0] || key);
+    }
+    const d = await api(`/api/projects/${pid}/stages/s3b-images`).catch(() => null);
+    const n = (d && d.data && d.data.prompts) || 0;
+    const dir = (d && d.data && d.data.dir) || "";
+    /* ★ 이 버튼은 **내보내기만** 한다. 온 그림을 붙이는 것은 옆의 «만든 이미지
+       불러오기» 다 — 한 버튼이 둘을 겸하니 "지금 누르면 무엇이 되나" 를 매번
+       물어야 했다(2026-08-14). 시점이 다른 일은 버튼도 다른 게 맞다. */
+
+    /* ★ 만들었다는 말만 하지 않고 **그 폴더를 열고, 경로를 클립보드에 담는다.**
+       이미지 스튜디오는 「출력 폴더」에 경로를 **붙여넣어야** 한다 — 탐색기를
+       띄워 주기만 하면 사람이 주소창에서 경로를 다시 복사해야 하고, 그 사이에
+       엉뚱한 폴더(다른 앱의 assets)가 그대로 남아 그림이 딴 데로 간다.
+       그림이 나오는 자리와 지시문이 나온 자리가 **같은 폴더**인 것이 이 앱과
+       스튜디오의 유일한 접점이다. */
+    if (dir) {
+      try { await navigator.clipboard.writeText(dir); } catch { /* 권한 없으면 그냥 넘어간다 */ }
+    }
+    toast(`이미지 JSON ${n}개 · 폴더 경로를 복사했습니다 — 스튜디오의 «출력 폴더» 에 붙여넣으세요`);
+    await api(`/api/projects/${pid}/reveal?step=images`, { method: "POST", body: {} })
+      .catch(() => { /* 폴더를 못 열어도 경로는 이미 손에 있다 */ });
+  } catch (e) {
+    toast("실패: " + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = was;
+  }
+}
 
 /* `0:04.5` ↔ 초. 사람이 `4.5` 로 쳐도 `0:04.5` 로 쳐도 받는다. */
 const fmt = (s) => {

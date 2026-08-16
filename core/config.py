@@ -29,10 +29,12 @@ DEFAULTS: Dict[str, Any] = {
         "decisions": "claude-opus-5",
         "script": "claude-opus-5",
         "theme": "claude-opus-5",
+        "imgprompt": "claude-opus-5",
     },
     "effort": {
         "caption": "medium", "link": "medium",
         "decisions": "high", "script": "high", "theme": "medium",
+        "imgprompt": "medium",
     },
     "budget_usd": {"per_stage": 1.5, "warn_total": 5.0},
     "frames": {
@@ -42,8 +44,32 @@ DEFAULTS: Dict[str, Any] = {
     "narration": {"chars_per_sec": 3.0, "voice": "F2", "speed": 1.0, "total_step": 8},
     "tts": {"engine": "none", "python": None, "voicewright_dir": None,
             "assets_dir": None, "timeout_ms": 300000},
+    # 모션 리마스터 — 완성 mp4 를 **재료로** 다시 굽는 별도 도구(motion-remaster).
+    # ★ 이 앱 안에 넣지 않는다. 완성본을 받아 새 파일을 내는 뒷단계이고, 여기
+    #   파이프라인과 아무것도 공유하지 않는다. 폴더 하나만 가리킨다 —
+    #   `09_이미지` 를 이미지 스튜디오와 주고받는 방식과 같다.
+    # ★ 없으면 없는 대로 돈다. 모션 화면이 "폴더를 알려 주세요" 만 띄운다.
+    "motion": {"tool_dir": None, "python": None},
     "render": {"seed_hex": "#7a5cc0", "max_single_file_mb": 10,
                "single_file_audio": "opus32"},
+    # 원고를 장으로 나눌 때
+    "capture": {
+        "mode": "html",
+        # 그림 한 줄(`<svg>`)을 보는 데 주는 시간. 글자 수로 재지 않는다 —
+        # 이유는 `core/htmldoc.auto_ats()` 주석에 있다.
+        "fig_sec": 3.0,
+    },
+    # 슬라이드 그림 — 이미지 스튜디오에 넘길 프롬프트의 문체와 규격.
+    # ★ 이 그림은 **몸통을 대신한다**(뒤에 까는 배경이 아니다). 제목만 위에 남고
+    #   1920×1080 한 판을 그림이 채운다. 그래서 가로로 꽉 차야 한다.
+    "image": {
+        "aspect": "landscape",          # gpt-image 네이티브: 1536×1024 (3:2)
+        "accent_a": "#1F4E79",          # 원고 SVG 의 파랑 네 단과 같은 결로
+        "accent_b": "#9DC3E6",
+        "negative": "watermark, logo, low quality, distorted, extra limbs",
+        # 그림을 몸통 대신 깔까. 기본은 **꺼짐** — 켜기 전까지 지금과 똑같이 돈다.
+        "swap": False,
+    },
 }
 
 
@@ -92,7 +118,7 @@ def load(force: bool = False) -> Dict[str, Any]:
 
 
 # 이 키들은 **사람마다 다른 값**이라 배포본이 아니라 local 파일로 간다
-LOCAL_KEYS = {"tts"}
+LOCAL_KEYS = {"tts", "motion"}
 
 
 def save(patch: Dict[str, Any]) -> Dict[str, Any]:

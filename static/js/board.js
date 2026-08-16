@@ -53,17 +53,27 @@ const COLS = [
        늘 채워져 있다). */
     id: "html", short: "원고", title: "원고 HTML",
     make: ["s2c-capture"],
-    has: (s) => s.media_kind === "html",
+    has: (s) => s.media_kind === "html" && !s.image_swap,
     ok: (s) => (s.html_blocks || 0) > 0,
     go: "/html",
   },
   {
-    id: "image", short: "이미지", title: "삽입 이미지",
-    make: ["s3b-images"],
-    has: (s) => s.media_kind === "text_image",
+    /* ★ 그림으로 갈 원고 — **원고 장과 다른 유형**이다. 같은 `media_kind:"html"`
+       이지만 가는 길이 다르다: 글은 안 뜨고 그림 한 판이 몸통을 대신한다.
+       원고를 넣을 때 어느 쪽인지 정하고, 여기서는 **그림이 왔는가**만 본다 —
+       작정(`image_swap`)은 그림보다 먼저 서고, 그림은 나중에 온다. 둘을 한
+       유형으로 묶으면 「그림 기다리는 장」이 어디에도 안 보인다. */
+    id: "swap", short: "그림 원고", title: "그림으로 갈 원고",
+    make: ["s3a-imgprompt", "s3b-images"],
+    has: (s) => s.media_kind === "html" && !!s.image_swap,
     ok: (s) => !!s.image,
-    go: "/image",
+    go: "/html",
   },
+  /* ★ 「삽입 이미지」(text_image) 칸은 **뺐다**(2026-08-14 지시). 그 레인은 화면
+     캡처로 만들던 옛 길(`capture.mode:"image"`)이고, 지금 원고는 전부 `html` 로
+     들어온다. 그림은 위 「그림으로 갈 원고」 한 유형으로 모은다 — 같은 일을 하는
+     칸이 둘이면 어느 쪽을 눌러야 하는지 매번 물어야 한다.
+     레인 자체는 살아 있다(s3b 가 여전히 받는다) — 현황판에만 안 세운다. */
   {
     id: "video", short: "영상", title: "삽입 영상",
     make: ["s1-frames", "s3-caption"],

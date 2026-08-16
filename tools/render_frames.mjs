@@ -68,7 +68,13 @@ async function cutTimes(page, sec) {
 
 const manifest = [];
 for (const s of slides) {
-  const url = `${BASE}/preview/${PID}?n=${s.no}&t=${Date.now()}`;
+  /* ★ `?n=` 은 **원래 번호(`src_no`)** 다 — 조립이 다시 매긴 순번이 아니다
+     (render/slides.py 의 `_bySrc` 주석). 뺀 장이 있으면 조립이 1부터 다시
+     번호를 매기는데, 그 순번으로 부르면 **뺀 장 수만큼 앞엣 화면이 찍힌다.**
+     2026-08-15 실측: 표지를 뺀 덱에서 8번 장 음성 위에 7번 그림이 깔렸다.
+     소리는 맞고 그림만 한 장 앞서 보이던 원인이 여기였다. */
+  const want = s.src_no || s.no;
+  const url = `${BASE}/preview/${PID}?n=${want}&t=${Date.now()}`;
   await page.goto(url, { waitUntil: "load" });
   // 폰트·미디어가 자리 잡을 시간 — 짧게 고정. 페이지 자체가 의존성 0(외부 요청 없음)이라
   // networkidle 을 기다릴 필요가 없다.

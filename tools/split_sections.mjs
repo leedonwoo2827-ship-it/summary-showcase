@@ -112,15 +112,26 @@ const style = await page.evaluate(() => {
     .join("\n");
 });
 
-const h1 = (await page.evaluate(() => {
+/* 표지 두 줄 — `h1` 과 **그 바로 아래 `<p>`**.
+   ★ 원고가 `h1` 밑에 책 이름을 한 줄 넣어 보낸다("표지 부제로 쓰시면 됩니다").
+     예전엔 그걸 버리고 **파일 이름**(`01-19`)을 부제 자리에 넣었다 — 그래서
+     완성본과 유튜브 글에 제목이 `19_원고` 로 나갔다(2026-08-15 지적). */
+const head = await page.evaluate(() => {
   const clean = (el) => {
     const c = el.cloneNode(true);
     c.querySelectorAll(".q").forEach((n) => n.remove());
     return c.textContent.trim();
   };
   const el = document.querySelector("h1");
-  return el ? clean(el) : "";
-})) || STEM;
+  if (!el) return { title: "", sub: "" };
+  const nx = el.nextElementSibling;
+  return {
+    title: clean(el),
+    sub: nx && nx.tagName === "P" ? clean(nx).slice(0, 80) : "",
+  };
+});
+const h1 = head.title || STEM;
+const subTitle = head.sub;
 
 /* ── 나누기 ────────────────────────────────────────────────────────────
  * 경계 판단은 `capture_sections.mjs:80-121` 과 **글자 그대로 같다.** 규칙이 둘로
@@ -273,9 +284,18 @@ const sections = await page.evaluate(({ HEIGHT, START, LEVELS }) => {
        빼 오지 않으면 그 정보는 사라진다. 긴 목록은 애초에 안 가져오니 영상에서
        늘어설 방법이 없다(2026-08-14 지시). */
     const qn = h.querySelector(".q > b");
+    /* 원고가 제목에 붙여 보낸 이름표 셋 — **여기서 안 집으면 영영 사라진다.**
+       제목은 몸통에 안 담기므로(위 주석) 속성도 같이 안 담긴다.
+         data-id   안 바뀌는 장 이름표(`sam19-03`). 그림 프롬프트를 번호가 아니라
+                   여기에 매단다 — 앞에 장이 끼어들어도 그림이 안 어긋난다
+         data-say  그 장에서 말할 문장. 화면 문구가 아니라 화면에 안 적힌 연결이다
+         data-img  그 장 그림의 영어 지시문. 있으면 조립하지 않고 그대로 쓴다 */
     items.push({
       no, title: cleanTitle(h), group: h.tagName === "H2" ? "" : group,
       q: qn ? parseInt(qn.textContent.trim(), 10) || 0 : 0,
+      did: h.getAttribute("data-id") || "",
+      say: h.getAttribute("data-say") || "",
+      img: h.getAttribute("data-img") || "",
       html: host.innerHTML, blocks, overflow, empty: n === 0,
     });
     no += 1;
@@ -307,12 +327,19 @@ if (emptyN === sections.length) {
  * 잡아 둔다 — 파이프라인에 태우면(B단계) 그 장의 실제 음성 길이로 다시 계산되고,
  * 사람이 손으로 적은 값은 그 위에서 이긴다.
  */
+/* ★ 그림 줄은 글자 수로 재지 않는다 — `core/htmldoc.py` 의 `auto_ats()` 와 **짝**이다.
+ *   `<svg>` 의 textContent 는 라벨을 다 세므로 책 원고에서는 그림 한 줄이 글줄보다
+ *   글자가 많다(실측: 그림 중앙값 81~93자 · 글줄 34자). 비례로 나누면 그림 하나가
+ *   그 장 시간의 40% 를 가져간다. 그림은 읽는 게 아니라 보는 것이라 글자 수와
+ *   상관이 없으니, 고정 시간으로 뺀다. 두 값을 양쪽에서 같게 유지할 것. */
 const MIN_STEP = 0.8;
+const FIG_TAGS = new Set(["svg", "figure", "img", "picture"]);
+const FIG_SEC = 3.0;
 for (const s of sections) {
   let t = 0;
   for (const b of s.blocks) {
     b.at = Math.round(t * 10) / 10;
-    t += Math.max(MIN_STEP, b.chars / CPS);
+    t += FIG_TAGS.has(b.tag) ? FIG_SEC : Math.max(MIN_STEP, b.chars / CPS);
   }
   s.sec = Math.round(t * 10) / 10;
 }
@@ -477,13 +504,20 @@ go(Math.max(0,(parseInt(location.hash.slice(1))||1)-1));
 const body = [];
 body.push(
   `<section class="hs hs-cover" data-no="1" data-kind="cover" data-title="${esc(h1)}">`
-  + `<h1>${esc(h1)}</h1><p>${esc(STEM)}</p></section>`);
+  + `<h1>${esc(h1)}</h1>`
+  + (subTitle ? `<p>${esc(subTitle)}</p>` : "") + `</section>`);
 
 for (const s of sections) {
   body.push(
     `<section class="hs" data-no="${s.no}" data-kind="section"`
     + ` data-group="${esc(s.group)}" data-title="${esc(s.title)}"`
     + ` data-sec="${s.sec}"${s.q ? ` data-q="${s.q}"` : ""}`
+    // 원고가 준 이름표 셋 — **있을 때만** 붙인다(`data-q` 와 같은 규칙).
+    // 기계는 아래 `#manifest` 를 읽는다. 여기 두는 것은 이 파일을 열어 본 사람이
+    // 장 하나를 짚어 「이게 어느 이름표였나」를 바로 볼 수 있게 하기 위해서다.
+    + `${s.did ? ` data-id="${esc(s.did)}"` : ""}`
+    + `${s.say ? ` data-say="${esc(s.say)}"` : ""}`
+    + `${s.img ? ` data-img="${esc(s.img)}"` : ""}`
     + `${s.overflow ? " data-overflow=\"1\"" : ""}>`
     + `<h2 class="hs-t">${esc(s.title)}`
     + `${s.q ? `<i class="qb">${s.q}</i>` : ""}</h2>`
@@ -513,12 +547,17 @@ const manifest = {
   source: SRC,
   html: basename(OUT),
   deck_title: h1,
+  deck_subtitle: subTitle,
   geometry: { src_width: SRC_W, box_width: BOX_W, k: Math.round(K * 100000) / 100000,
               cap_height: HEIGHT },
   slides: [
     { no: 1, kind: "cover", title: h1, media_kind: "text", sec: null, blocks: [] },
     ...sections.map((s) => ({
       no: s.no, kind: "section", title: s.title, section: s.group,
+      // ★ 이름은 snake_case 다 — 원장(`core/ledger.py`)이 `data_id` 를 키로 쓰고,
+      //   여기서 이름이 갈리면 옮겨 담는 코드가 한 겹 더 생긴다.
+      //   원고가 안 보내면 빈 문자열이다(문제집 원고에는 셋 다 없다).
+      data_id: s.did, say: s.say, img: s.img,
       media_kind: "html", sec: s.no, overflow: s.overflow, empty: s.empty,
       est_sec: s.sec,
       blocks: s.blocks.map((b) => ({ b: b.b, tag: b.tag, chars: b.chars,

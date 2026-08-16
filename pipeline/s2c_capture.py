@@ -119,6 +119,7 @@ def run(job, pid: int, slug: str, project: Dict[str, Any], *, force: bool = Fals
 
     slides: List[Dict[str, Any]] = []
     images: List[Tuple[int, Path]] = []
+    mans: List[Dict[str, Any]] = []      # 원고마다의 장 목록 — 제목을 여기서 꺼낸다
     no = 1
     job.progress(0, len(html_items), "구조 읽기")
     for i, item in enumerate(html_items, 1):
@@ -134,6 +135,7 @@ def run(job, pid: int, slug: str, project: Dict[str, Any], *, force: bool = Fals
             manifest, out_dir = _capture(job, node, pid, slug, i, src, label)
             doc_rel = None
 
+        mans.append(manifest)
         for s in manifest["slides"]:
             # manifest 의 `section` 은 항목 갈래일 뿐 — 덱의 장 종류(SLIDE_KINDS)에는
             # 없는 이름이다. 표지·마무리만 그대로 두고 나머지는 `note` 로 앉힌다.
@@ -144,6 +146,14 @@ def run(job, pid: int, slug: str, project: Dict[str, Any], *, force: bool = Fals
                 "title": s["title"], "note": "",
                 "media_kind": s.get("media_kind", "text"), "video_id": None,
                 "evidence_hint": "", "body": "", "narration": {},
+                # 원고가 준 이름표 셋(`tools/split_sections.mjs` 가 `#manifest` 에 실어 준다).
+                # 원고에 없으면 빈 문자열 — 문제집 원고에는 셋 다 없다.
+                #   data_id  그림 원장이 프롬프트를 매다는 키. 번호가 아니라 이것이다
+                #   say      그 장에서 말할 문장
+                #   img      그 장 그림의 영어 지시문 (s3a 가 있으면 Claude 를 안 부른다)
+                "data_id": s.get("data_id") or "",
+                "say": s.get("say") or "",
+                "img": s.get("img") or "",
             }
             if slide["media_kind"] == "html" and doc_rel:
                 blocks = s.get("blocks") or []
@@ -158,6 +168,11 @@ def run(job, pid: int, slug: str, project: Dict[str, Any], *, force: bool = Fals
                 # 줄 길이 — 조립(s8)이 음성 길이를 알게 된 뒤 시각을 다시 나눌 때 쓴다.
                 # `html_text` 는 80자에서 잘린 미리보기라 길이를 재는 데 못 쓴다.
                 slide["html_chars"] = [int(b.get("chars") or 0) for b in blocks]
+                # 줄 종류 — 그림 줄(`svg`)은 글자 수로 시간을 잡으면 안 된다.
+                # 이 원고의 SVG 는 라벨이 많아 글자 수가 **글줄보다 많고**(중앙값 81자
+                # 대 34자), 비례로 나누면 그림 하나가 그 장 시간의 40% 를 가져간다.
+                # `core/htmldoc.auto_ats()` 가 이 값을 보고 그림만 고정 시간으로 뺀다.
+                slide["html_tags"] = [str(b.get("tag") or "") for b in blocks]
                 # 자동 배분값. 사람이 고친 값(overrides.html_at)이 이것을 이긴다.
                 slide["html_at_default"] = [float(b.get("at") or 0) for b in blocks]
                 if s.get("q"):
@@ -180,8 +195,23 @@ def run(job, pid: int, slug: str, project: Dict[str, Any], *, force: bool = Fals
     for sec in secs_by_id.values():
         sec["slide_nos"] = [s["no"] for s in slides if s["section"] == sec["id"]]
 
+    # ★ **제목은 원고가 안다.** 프로젝트 제목은 드래그드랍한 파일 이름에서 오므로
+    #   `19_원고` 같은 것이 그대로 완성본·유튜브 글에 나간다(2026-08-15 지적).
+    #   원고의 `h1`(제목)과 그 아래 `<p>`(책 이름)를 쓰고, 없을 때만 파일 이름으로
+    #   내려간다. 사람이 목차 화면에서 고친 제목이 있으면 그것이 가장 세다.
+    man_title = ""
+    man_sub = ""
+    for m in mans:
+        man_title = man_title or str(m.get("deck_title") or "").strip()
+        man_sub = man_sub or str(m.get("deck_subtitle") or "").strip()
+    cur = str(project.get("title") or "").strip()
+    # 파일 이름 티가 나는 제목(참고자료 이름과 같거나 `_원고` 꼴)은 원고 것으로 바꾼다
+    stems = {ws.nfc(Path(r["file"]).stem) for r in html_items}
+    looks_file = (not cur) or cur == slug or ws.nfc(cur) in stems or cur.endswith("_원고")
+    deck_title = (man_title if (looks_file and man_title) else cur) or slug
+
     outline_data = {
-        "deck_title": project.get("title") or slug, "deck_subtitle": "",
+        "deck_title": deck_title, "deck_subtitle": man_sub,
         "sections": list(secs_by_id.values()), "slides": slides,
         "budget": len(slides), "dropped": [],
     }
@@ -207,6 +237,14 @@ def run(job, pid: int, slug: str, project: Dict[str, Any], *, force: bool = Fals
 
     # ── 목차 확정 표시 — 화면이 "설문/기획서"가 아니라 "목차 확정됨"으로 본다
     doc = ws.load_project(pid, slug)
+    # 파일 이름이 제목 자리에 앉아 있었으면 원고 것으로 바꿔 준다 — 완성본·유튜브
+    # 글·썸네일 원고가 전부 이 값을 쓴다.
+    if looks_file and man_title:
+        doc["title"] = deck_title
+        if man_sub:
+            doc["book"] = man_sub
+        job.add_log(f"제목을 원고에서 가져왔습니다 — {deck_title}"
+                    + (f" ({man_sub})" if man_sub else ""))
     doc["outline_confirmed_at"] = datetime.now().isoformat(timespec="seconds")
     doc["slide_budget"] = len(slides)
     doc["overrides_rev"] = int(doc.get("overrides_rev") or 0) + 1

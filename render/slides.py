@@ -80,6 +80,23 @@ def _media(s: Dict[str, Any], res) -> str:
         return '<div class="m m-todo">영상 대기</div>'
 
     if kind == "html":
+        # ★ 그림으로 **갈아끼운 장**. 몸통(글줄)이 통째로 그림 한 판이 된다 —
+        #   제목만 위에 남고, 설명은 내레이션이 한다. 뒤에 까는 배경이 아니다:
+        #   글 위에 사진을 깔면 슬레이트 글자가 안 읽히고, 반투명 막을 씌우면
+        #   그림이 뿌예진다. 둘 다 하지 않고 **자리를 바꾼다.**
+        #   ★ 줄이 하나씩 떠오르는 것은 이 장에서 사라진다(줄이 없으니까).
+        #     장 길이·전환·음성·자막은 그대로다 — 그래서 켜고 끄기가 안전하다.
+        shots = [x for x in (s.get("images") or []) if x]
+        if s.get("image_swap") and shots:
+            src = res.asset(shots[0])
+            if src:
+                # ★ `loading="eager"` 다. 이 그림은 **곧 슬라이드 전체**라, 미뤘다가
+                #   장이 뜰 때 아직 안 와 있으면 빈 화면이 그대로 영상에 구워진다
+                #   (2026-08-14 실측: 화면이 1920×1080 로 잡혔는데 naturalWidth 가
+                #   0 이었다). 글 옆에 붙는 그림과 달리 늦어도 되는 그림이 아니다.
+                return (f'<figure class="m m-shots m-html m-swap" data-n="0"'
+                        f' data-at="[]"><img loading="eager" decoding="sync"'
+                        f' src="{esc(src)}" alt=""/></figure>')
         # ★ 조각은 이미 조립(s8)이 읽어 넣어 두었다 — 여기서 파일을 열지 않는다.
         #   렌더러는 `res` 가 주는 URL 밖에 못 보고, `dist/` 는 파일 한 장으로
         #   나가야 해서 나중에 불러올 수도 없다.
@@ -130,8 +147,15 @@ def _slide(s: Dict[str, Any], lane_i: int, total: int, res) -> str:
     color = LANE_COLORS[lane_i % len(LANE_COLORS)]
     label = KIND_LABEL.get(kind, "")
     au = _audio(s, res)
+    media = _media(s, res)
 
-    if kind == "cover":
+    # ★ 표지도 **그림 자리가 있으면 맨 끝 장과 똑같이** 찍는다.
+    #   예전에는 `kind == "cover"` 를 무조건 글자 판으로 일찍 돌려보냈다. 그래서
+    #   삽입 이미지 화면에서 `001.png` 를 붙여도 판에는 영영 안 나왔고, 그림이
+    #   저장이 안 된 것처럼 보였다(2026-08-16: "맨 앞은 왜 이미지가 안 바뀌나요").
+    #   붙은 것과 보이는 것이 갈리면 사람은 저장을 의심한다 — 갈리지 않게 한다.
+    #   그림 자리가 없는 표지는 그대로 글자 판이다(그때 `_media` 가 빈 문자열이다).
+    if kind == "cover" and not media:
         p = s.get("_project") or {}
         meta = " · ".join(x for x in [p.get("repo", {}).get("name_with_owner"),
                                       " / ".join((p.get("stack") or [])[:3])] if x)
@@ -146,7 +170,6 @@ def _slide(s: Dict[str, Any], lane_i: int, total: int, res) -> str:
         )
 
     tag = f'<span class="tag">{esc(label)}</span>' if label else ""
-    media = _media(s, res)
     # ★ 캡처 이미지 장(text_image)은 본문이 늘 비어 있다(S2c 캡처가 채우지
     #   않는다) — 그런데도 2단 그리드(텍스트 칸 + 이미지 칸)를 쓰면 빈 텍스트
     #   칸만큼 이미지가 절반 폭으로 쪼그라든다. "화면을 이미지가 다 덮어야
@@ -154,8 +177,18 @@ def _slide(s: Dict[str, Any], lane_i: int, total: int, res) -> str:
     # ★ 원고 장(html)도 `s-shots` 를 그대로 쓴다. 흰 배경 · 번호 감추기 · 좁은 제목
     #   여백 · 통짜 폭 · 재생 중 제목이 흔들리지 않게 하는 예외까지 전부 이미 여기
     #   붙어 있다. 새 클래스를 만들면 그 규칙들을 하나씩 다시 벌어야 한다.
+    # ★ 영상 장도 **같은 상자**를 쓴다(2026-08-14 지시: "영상도 이런식으로").
+    #   제목 아래 1688×944 통짜 자리 — 그림 장·원고 장과 자리도 크기도 같다.
+    #   장 종류가 바뀔 때 화면이 들썩이지 않는 것이 이 자리를 하나로 두는 값이다.
+    #   ★ `.s-media.vplay:not(.s-shots)` 의 "재생하면 글 칸이 접힌다" 는 이 장에
+    #     이제 안 걸린다 — 접을 글 칸 없이 처음부터 통짜라 접을 것이 없다.
     cls = "s" + (" s-media" if media else "") + (
-        " s-shots" if s.get("media_kind") in ("text_image", "html") else "")
+        " s-shots" if s.get("media_kind") in ("text_image", "html", "video") else "")
+    # ★ 그림으로 갈아낀 장은 **화면 전체가 그림**이다(1920×1080 한 판). 상자 안에
+    #   앉히면 오른쪽·아래에 흰 여백이 남는데, 그건 "통으로 갈아낀다" 가 아니다
+    #   (2026-08-14: "이걸 원하는 게 아니라니까"). 제목만 그 위에 얹힌다.
+    if "m-swap" in media:
+        cls += " s-swap"
 
     return (
         f'<section class="{cls}" data-no="{no}" data-src="{s.get("src_no") or no}"'
@@ -356,6 +389,16 @@ p{margin:0 0 11px;font-size:clamp(14px,1.15vw,17px);color:#4a453f;max-width:62ch
    ★ `max-width` 로는 안 된다: 그리드 칸이 .wrap(1180px)까지만 늘려서, 그보다
      큰 max-width 는 아무 효과가 없다(그래서 원래도 width 를 직접 준다). */
 .s-shots .m-shots{background:#fff;width:min(1688px,88vw);max-width:none}
+/* ★ 영상 장도 **같은 자리 같은 크기**다(2026-08-14 지시). 영상 `<figure>` 에는
+     `.m-shots` 가 없어 위 폭 규칙이 안 걸리므로 여기서 따로 같은 값을 준다.
+     `contain` 인 이유: 화면 녹화가 16:9 가 아닐 수도 있는데 `cover` 로 두면
+     가장자리가 잘려 나간다 — 그림과 달리 영상은 잘리면 안 되는 것이 찍혀 있다.
+     남는 자리는 검정이라 영상 프레임처럼 보인다. */
+.s-shots .m:not(.m-shots){width:min(1688px,88vw);max-width:none;margin:0;
+  aspect-ratio:16/9;background:#000;overflow:hidden;border-radius:inherit}
+.s-shots .m:not(.m-shots)>video,
+.s-shots .m:not(.m-shots)>img{display:block;width:100%;height:100%;
+  object-fit:contain;max-width:none;box-shadow:none}
 /* ★ `:first-child` 도 붙여 아래 `.m-shots img:first-child{position:absolute}`
    (여러 장 캡션 전환용 — 이 종류엔 항상 이미지가 한 장뿐이라 그게 곧
    first-child 다)와 명시성을 맞춘다. 같은 명시성이면 소스 순서상 저 규칙이
@@ -396,6 +439,89 @@ p{margin:0 0 11px;font-size:clamp(14px,1.15vw,17px);color:#4a453f;max-width:62ch
 .m-html>.doc{padding-top:5px;padding-bottom:0;margin-left:calc(2vh / 1.788)}
 .m-html>.doc>*:first-child{margin-top:0}
 .m-html>.doc>*:last-child{margin-bottom:0}
+
+/* ★ 그림으로 갈아끼운 장 — 몸통 자리를 그림 한 판이 채운다.
+   `.doc` 이 없으므로 위 944px 배치·배율 규칙은 하나도 안 걸린다. 아래 JS 도
+   `.doc` 이 없으면 일찍 돌아간다(그 자리에 주석을 남겼다).
+
+   ★ 비율은 **그림이 만들어지는 비율**을 그대로 쓴다 — 3:2. gpt-image 의
+     `landscape` 가 1536×1024 다(`showcase.config.json` 의 `image.aspect`).
+     예전엔 16:9 상자에 `cover` 로 넣어 위아래를 잘랐는데, 만든 비율대로 두면
+     **잘려 나가는 것이 없다**(2026-08-14 지시: "비율은 정해져 있을 테니 그건
+     맞추되"). 그 설정을 바꾸면 아래 `aspect-ratio` 도 같이 바꿀 것.
+
+   ★ 크기는 **높이가 정한다.** 폭부터 잡으면(1688) 3:2 에서 높이가 1125 가 되어
+     제목 아래 자리(944)를 넘친다. 높이를 944 로 두면 폭이 1416 으로 따라온다 —
+     **자리에 들어가는 가장 큰 3:2** 다. 글 판이 1688 이었으니 비율을 맞춘 것만으로
+     이미 한 뼘 줄어든 셈이고, 거기서 더 줄이면 옆이 허전해진다(2026-08-14: 처음에
+     848 로 줄였더니 "너무 줄인 것 같다" — 「조금 줄여」를 두 번 적용한 것이었다).
+     더 줄이고 싶으면 `--swap-h` 하나만 바꾸면 된다. 폭은 비율이 알아서 따라온다.
+
+   ★ 셀렉터를 길게 쓴 이유 — 위 `.s-shots .m-shots img:first-child{width:auto}`
+     (캡처 그림을 원래 크기로 두려고 넣은 규칙)가 **우선순위로 이긴다**(0,3,1 대
+     0,1,1). 짧게 쓰면 그림이 제 크기로 앉아 상자를 안 채운다(2026-08-14 실측:
+     상자 1688 인데 그림 1416). 같은 자릿수로 맞추고 뒤에 두어 이긴다. */
+.m-swap{background:#fff;--swap-h:944px}
+/* ★ 그림에 **글이 박혀 오면** 화면을 통째로 준다 — 제목·번호를 걷고 상자도 없앤다.
+     그림 안에 헤드라인이 이미 인쇄돼 있어서, 위에 HTML 제목을 또 띄우면 한 장에
+     제목이 둘이 된다(2026-08-14 실측: "1 경제 전체를 보는 눈" 위에 "같은 경제,
+     다른 렌즈" 가 같이 떴다). 이게 「유튜브 크기로 통으로 갈아낀다」의 완성형이다.
+   ★ `cover` 다 — 3:2 를 16:9 에 꽉 채우면 위아래가 조금 잘린다. 지시문이 상단에
+     제목 자리를 넓게 비우게 시키므로 글자가 잘려 나가지 않는다. */
+/* 번호 배지와 빈 글칸만 걷는다. **제목은 남긴다** — 2026-08-14 지시:
+   "제목이 너무 왔다갔다해서" 그림 안에 헤드라인을 넣었지만, 화면 위 제목도
+   같이 두기로 했다. 그림 위에 얹히므로 z-index 로 띄운다. */
+.s-swap header,.s-swap .txt{display:none}
+/* ★ **자르지 않고, 남는 자리를 디자인으로 만든다.**
+     그림은 3:2(1536×1024)이고 화면은 16:9 다. 채우면 위아래가 잘리는데 그림 맨
+     위에 헤드라인이 인쇄돼 있어 **제목이 날아간다.** 그러니 자를 수 없고, 남는
+     자리는 반드시 생긴다. 흰 여백으로 두면 "덜 만든 화면" 으로 보이므로
+     (2026-08-14: "하얗거나 잘린 듯할 때 이질감이 크다"), 바탕을 깔고 그림을
+     **액자에 넣은 판**으로 만든다. 오른쪽에 남는 자리는 원래 **아바타 자리**다
+     (위 `.s-shots` 폭 주석의 222px — 사람이 우하단에 뜬다).
+   ★ absolute 로 띄우지 않는다. 그렇게 했더니 장이 화면 아래로 밀리고(y=1080)
+     그림 높이가 40px 로 잡혔다. 폭·높이는 아래 3:2 규칙이 이미 잘 잡고 있다. */
+/* ★ 자리 배분 — **왼쪽으로 붙이고 위에 한 줄 남긴다**(2026-08-14 지시).
+     위   제목 한 줄. 나중에 로고가 같이 앉는다
+     왼쪽 34px 만 띄운다 — 그림이 화면을 최대한 쓰게
+     오른쪽 남는 자리(≈450px)가 **아바타 자리**다. 사람이 우하단에 뜬다 */
+/* ★ **글 장도 같은 액자를 쓴다**(2026-08-15 지시). 그림 장만 액자에 들어가 있으면
+     장이 넘어갈 때 바탕이 흰색↔아이보리로 튄다. 안쪽은 흰 판 그대로 두고
+     — 원고 CSS 가 흰 바탕을 전제로 색을 잡아 두었다 — 바깥 바탕과 테두리만
+     그림 장과 같게 맞춘다. */
+.s-shots{background:radial-gradient(120% 100% at 18% 0%,#F7F4ED 0%,#EFEAE0 55%,#E7E1D5 100%)}
+.s-shots .m-html:not(.m-swap){background:#fff;border-radius:14px;overflow:hidden;
+  box-shadow:0 1px 2px rgba(58,50,38,.10),0 2px 8px rgba(58,50,38,.06),
+             0 28px 64px -22px rgba(58,50,38,.42)}
+/* 조각 안쪽에 숨 쉴 자리 — 액자에 닿아 글자가 붙어 보이지 않게 */
+.s-shots .m-html:not(.m-swap)>.doc{padding-top:16px;padding-bottom:14px}
+.s.s-swap{background:radial-gradient(120% 100% at 18% 0%,#F7F4ED 0%,#EFEAE0 55%,#E7E1D5 100%)}
+/* ★ 치수를 **여기 한 자리에서** 잡는다. 섹션 padding 을 고치는 길은 위쪽
+     `.s`·`.s-shots` 와 자릿수 싸움이 되고, `--swap-h` 는 `.m-swap` 이 제 값을
+     들고 있어 섹션에서 내려보내도 안 먹는다(2026-08-14 실측: 956 을 줘도 944).
+   ★ **픽셀이 아니라 창 크기 단위**로 적는다. 처음에 1434×956 으로 못박았더니
+     1920×1080 아닌 창에서 카드가 화면을 넘쳐 제목이 잘렸다(2026-08-14 실측).
+     영상은 늘 1920 으로 찍히지만 사람은 아무 크기 창에서 완성본을 연다.
+       높이 88.5vh = 956/1080 · 왼쪽 여백 1.77vw = 34/1920
+       음수 margin 은 섹션의 5vw padding 을 빼는 값이다(1.77 - 5 = -3.23)
+     남는 오른쪽(≈23.5vw)이 아바타 자리다. */
+.s.s-shots.s-swap .m-shots.m-swap{height:min(88.5vh,calc(94vh - 62px));
+  width:auto;aspect-ratio:3/2;max-width:none;margin-left:-3.23vw}
+/* 상단 한 줄 — 제목과 로고가 나란히 설 자리. 로고를 넣을 때 이 줄에 붙이면 된다 */
+.s.s-swap>.wrap>h2{margin:0 0 1.3vh;padding-left:6px;line-height:1.25;
+  font-size:clamp(18px,1.56vw,30px)}
+.s.s-swap .m-shots.m-swap{background:transparent;border-radius:14px;overflow:hidden;
+  box-shadow:0 1px 2px rgba(58,50,38,.10),0 2px 8px rgba(58,50,38,.06),
+             0 28px 64px -22px rgba(58,50,38,.42)}
+.s.s-swap .m-shots.m-swap>img{width:100%;height:100%;object-fit:cover;
+  border-radius:inherit}
+/* 제목은 바탕 위에 앉는다 — 그림 안 헤드라인과 결이 갈리지 않게 색을 낮춘다 */
+.s.s-swap>.wrap>h2{color:#5A5142}
+.s.s-swap>.wrap>h2::after{background:#C9BFAC}
+.s-shots .m-shots.m-swap{aspect-ratio:3/2;height:min(var(--swap-h),88vh);
+  width:auto;max-width:88vw}
+.s-shots .m-shots.m-swap>img{display:block;width:100%;height:100%;
+  object-fit:contain;max-width:none;position:static;box-shadow:none}
 
 /* 줄 등장 — `display` 가 아니라 `opacity` 다. display 로 감추면 줄이 뜰 때마다
    아래 내용이 밀려 글이 통째로 튄다. 자리는 처음부터 잡아 두고 보이기만 바꾼다.
@@ -731,7 +857,10 @@ const HTML_SRC_W=944;
 function fitHtml(sec){
   if(!sec)return;
   const box=sec.querySelector('.m-html'); if(!box)return;
-  const doc=box.firstElementChild; if(!doc)return;
+  /* ★ `.doc` 을 **이름으로** 찾는다(예전엔 firstElementChild 였다). 그림으로
+     갈아끼운 장(.m-swap)은 첫 자식이 `<img>` 라, 자리로 집으면 그림에 944px
+     배율을 먹여 통째로 찌그러진다. 그 장은 CSS(aspect-ratio)가 알아서 맞춘다. */
+  const doc=box.querySelector(':scope>.doc'); if(!doc)return;
   doc.style.transform='none';            // 재려면 먼저 풀어야 한다
   box.style.height='auto';
   const nat=doc.scrollHeight;            // 944px 폭에서의 실제 높이

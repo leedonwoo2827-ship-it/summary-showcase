@@ -25,6 +25,7 @@ import { navigate } from "./shell.js";
 import { videoEditor as ved } from "./videoedit.js";
 import { runSteps } from "./runner.js";
 import { stepBadge, DECK } from "./steps.js";
+import { storyboard } from "./storyboard.js";
 
 /* ★ 손편집의 키는 **원래 번호(src_no)** 다.
  *
@@ -833,7 +834,9 @@ export async function mount(root, ctx) {
       ev.append(icon("file", 11), el("span", null, s.evidence_hint));
       meta2.appendChild(ev);
     }
-    wrap.appendChild(meta2);
+    /* ★ 제목·본문은 **맨 아래**로 내렸다(2026-08-16 지시). 손이 가는 순서가
+       듣기 → 발음 고치기 → 차례 정하기이고, 제목·본문은 그 전에 이미 확정된
+       것이라 맨 위에 있을 이유가 없었다. 아래쪽에서 append 한다. */
     setTimeout(() => { autoSize(tin); autoSize(bin); }, 0);
 
     /* 고친 글이 실제 면에 어떻게 앉는지 보려면 미리보기를 다시 읽어야 한다.
@@ -865,6 +868,36 @@ export async function mount(root, ctx) {
     pron.placeholder = "비우면 자막을 그대로 읽습니다";
     pron.oninput = () => edit(okey(s), ["narration", "text"], pron.value);
     g2.appendChild(pron);
+
+    /* ★ 숫자를 소리대로 — **이 칸 안에서만** 바꾼다. 자막에서 다시 만들지
+       않는다: 발음 칸에는 문체를 비롯해 손으로 고친 것이 이미 얹혀 있어서,
+       다시 만들면 그게 통째로 날아간다.
+       ★ 왜 필요한가 — TTS 가 숫자를 글자로 읽다가 씹는다(2026-08-16:
+       "여러 번 나오면 씹히네요 발음이"). 한 장에 열 군데씩 나오면 손으로는
+       반드시 몇 개를 놓친다(실제로 `1965년` 두 군데가 남아 있었다). */
+    const nb = el("button", "btn sm");
+    nb.type = "button";
+    nb.append(icon("wand", 12), el("span", null, "숫자를 소리대로"));
+    nb.title = "1960년대 → 천구백육십 년대 · 2.0퍼센트 → 이 쩜 영 퍼센트"
+      + "\n숫자만 바꿉니다 — 문체는 건드리지 않습니다";
+    nb.onclick = async () => {
+      const before = pron.value;
+      if (!/\d/.test(before)) { toast("바꿀 숫자가 없습니다"); return; }
+      nb.disabled = true;
+      try {
+        const r = await api("/api/speak-numbers",
+                            {method: "POST", body: {text: before}});
+        if (r.text === before) { toast("바꿀 숫자가 없습니다"); return; }
+        pron.value = r.text;
+        edit(okey(s), ["narration", "text"], pron.value);   // 저장은 같은 길로
+        toast("숫자를 소리대로 바꿨습니다 — 읽어 보고 «다시 합성»");
+      } catch (e) {
+        toast("바꾸지 못했습니다: " + e.message, "err");
+      } finally {
+        nb.disabled = false;
+      }
+    };
+    g2.appendChild(nb);
     grid.appendChild(g2);
     wrap.appendChild(grid);
 
@@ -873,16 +906,81 @@ export async function mount(root, ctx) {
 
     const ab = el("div", "fb");
     ab.appendChild(el("label", null, "음성"));
-    if (s.audio && s.audio.file) {
-      const a = el("audio");
-      a.controls = true; a.preload = "none";
-      a.src = `/api/projects/${state.projectId}/audio/${s.no}`;
-      ab.appendChild(a);
-      ab.appendChild(el("div", "dc-meta", `${s.audio.source} · ${fmt(s.audio.sec)}`));
+    /* ★ 발음을 고치면 **여기서 다시 만들고 여기서 듣는다.** 전체 합성은 31장에
+       몇 분이라, 발음 한 군데 고칠 때마다 그걸 돌리면 검수가 끝나지 않는다
+       (2026-08-16 요청: "발음을 변경하면 재생성할 수 있고, 그것도 다시 들을 수
+       있게. 여기서 ok 가 되어야 나갈 겁니다"). */
+    const aud = el("audio");
+    aud.controls = true;
+    // ★ `preload="none"` 이면 누르기 전까지 `0:00 / 0:00` 이라 "안 나온다" 로 읽힌다
+    aud.preload = "metadata";
+    const meta = el("div", "dc-meta");
+    const has = !!(s.audio && s.audio.file);
+
+    const setSrc = (bust) => {
+      aud.src = `/api/projects/${state.projectId}/audio/${s.no}`
+        + (bust ? `?v=${Date.now()}` : "");
+      aud.load();
+    };
+    if (has) {
+      setSrc(false);
+      meta.textContent = `${s.audio.source} · ${fmt(s.audio.sec)}`;
+      ab.append(aud, meta);
     } else if (s.narration && s.narration.est_sec) {
       ab.appendChild(el("div", "dc-muted", `합성 전 · 예상 ${fmt(s.narration.est_sec)}`));
     } else {
       ab.appendChild(el("div", "dc-muted", "대본 전"));
+    }
+
+    // 대본이 있으면 — 음성이 아직 없어도 — 다시 만들 수 있어야 한다
+    if (s.narration && (s.narration.text || s.narration.srt_text)) {
+      const rv = el("button", "btn sm");
+      rv.type = "button";
+      const rl = el("span", null, has ? "발음대로 다시 합성" : "이 장 합성");
+      rv.append(icon("refresh", 12), rl);
+      rv.title = "지금 발음 칸에 적힌 대로 이 장만 다시 만듭니다";
+      rv.onclick = async () => {
+        rv.disabled = true;
+        const was = rl.textContent;
+        /* 초가 올라가는 것이 "살아 있다" 의 유일한 증거다 — 합성은 몇십 초 걸린다.
+           ★ `clock` 이라는 이름은 이 파일에서 이미 다른 것이라 쓰지 않는다. */
+        const t0 = Date.now();
+        const tick = () => {
+          const v = Math.floor((Date.now() - t0) / 1000);
+          rl.textContent = `합성 중 · ${Math.floor(v / 60)}:`
+            + String(v % 60).padStart(2, "0");
+        };
+        tick();
+        const iv = setInterval(tick, 1000);
+        try {
+          const r = await api(
+            `/api/projects/${state.projectId}/revoice/${s.no}`, {method: "POST"});
+          if (!has) { ab.textContent = ""; ab.append(el("label", null, "음성"), aud, meta); }
+          // ★ 같은 이름에 다른 소리다 — 꼬리표를 붙여야 옛 소리가 다시 안 난다
+          setSrc(true);
+          meta.textContent = `tts · ${fmt(r.sec)} · 방금 다시 만듦`;
+          toast(`${s.no}장 음성을 다시 만들었습니다 — 들어 보세요`);
+          aud.play().catch(() => { /* 자동재생을 막는 브라우저면 누르면 된다 */ });
+          /* ★ 길이가 달라지면 **자막 시각이 밀린다.** 조용히 두면 어긋난 자막이
+             그대로 영상에 실려 나간다 — 자막은 공짜니 다시 돌리면 그만이다. */
+          if (r.subtitle_stale) {
+            let note = ab.querySelector(".dc-restale");
+            if (!note) {
+              note = el("div", "dc-meta dc-restale");
+              ab.appendChild(note);
+            }
+            note.textContent = `길이가 ${fmt(r.was)} → ${fmt(r.sec)} 로 바뀌었습니다`
+              + " — 내보내기 전에 «자막» 을 다시 돌리세요";
+          }
+        } catch (e) {
+          toast("다시 만들지 못했습니다: " + e.message, "err");
+        } finally {
+          clearInterval(iv);
+          rl.textContent = was;
+          rv.disabled = false;
+        }
+      };
+      ab.appendChild(rv);
     }
     bar.appendChild(ab);
 
@@ -942,6 +1040,22 @@ export async function mount(root, ctx) {
     }
     bar.appendChild(mb);
     wrap.appendChild(bar);
+
+    /* ── 스토리보드 정리 — 말하는 차례와 글자 뜨는 차례를 맞춘다 ─────────
+       ★ 스틸은 위 슬라이드 자리에, 순서 표는 음성 바로 아래에 붙는다.
+         영상을 아직 안 구웠으면 아무것도 안 붙고 화면은 예전 그대로다. */
+    const sbStage = el("div", "sb-host");
+    stage.parentNode.insertBefore(sbStage, stage);
+    const sbRows = el("div");
+    wrap.appendChild(sbRows);
+    // ★ 자막을 문장별로 펼치는 자리는 **자막 칸 바로 밑**이다(g1) — 거기서
+    //   "몇 초에 무슨 말" 을 보고 상자에 넣을 초를 정한다.
+    storyboard(sbStage, sbRows, g1, s.no).then((ok) => {
+      // 스틸이 곧 그 장의 영상 프레임이다 — 미리보기를 두 개 둘 이유가 없다
+      if (ok) stage.hidden = true;
+    });
+
+    wrap.appendChild(meta2);
 
     return wrap;
   }

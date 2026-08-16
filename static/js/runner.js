@@ -41,16 +41,41 @@ export function clock(t0) {
  *   o.onStep  (text, at) => void — at = {completed, total, step, sec}
  *                                버튼 말고 다른 곳에도 뿌리고 싶을 때
  *   o.onLog   (lines) => void — 서버가 쌓은 로그 전문. 흐르는 것을 보여 줄 때
- *   o.onDone  () => void
+ *   o.onDone  (result) => void — result = 마지막 잡이 남긴 값(없으면 null)
  * @returns {Promise<boolean>} 끝까지 갔으면 true
  */
 export async function runSteps(keys, o = {}) {
   if (!state.projectId || !keys.length) return false;
-  const { label, btn, group = [], names = {}, onStep, onLog, onDone } = o;
+  return runJobs(keys.map((k) => ({
+    url: `/api/projects/${state.projectId}/stages/${k}/run`,
+    name: (o.names || {})[k] || k,
+  })), o);
+}
+
+/**
+ * 잡 하나를 돌린다 — **스테이지가 아닌 것도.**
+ *
+ * ★ 뽑아낸 이유: 모션 리마스터는 레지스트리 스테이지가 아니라서
+ *   `/stages/{k}/run` 이 아닌 제 창구를 쓴다(`pipeline/s13_motion.py` 머리말).
+ *   그렇다고 이 폴링 루프를 한 벌 더 쓰면, 「버튼이 시계가 되어 돈다」는 규칙을
+ *   고칠 때 또 한 군데를 빠뜨린다. 위 runSteps 도 이제 이걸 부른다.
+ *
+ * @param {string} url  POST 하면 {job_id} 를 주는 주소
+ */
+export function runJob(url, o = {}) {
+  return runJobs([{ url, name: o.name || "" }], o);
+}
+
+async function runJobs(jobs, o = {}) {
+  if (!state.projectId || !jobs.length) return false;
+  const { label, btn, group = [], onStep, onLog, onDone } = o;
   let seen = 0;                        // 새로 늘어난 줄만 넘긴다
+  /* 마지막 잡이 남긴 값. ★ 반환값으로 내보내지 않고 `onDone` 으로만 준다 —
+     여기 돌아오는 것이 boolean 이라고 믿는 화면이 이미 여럿이다. */
+  let last = null;
   const was = label ? label.textContent : "";
   const t0 = Date.now();
-  let step = names[keys[0]] || keys[0];
+  let step = jobs[0].name || "실행";
   /* ★ 몇 개 중 몇 개인지는 서버만 안다(프레임 6개 중 3개, 장 40개 중 12개).
    * 알 수 없는 단계도 있다 — 그때는 total 이 0 이고, 화면은 **흐르는 막대**로
    * 바꿔 그린다. "모르니까 아무것도 안 그린다" 가 제일 나쁘다. */
@@ -68,13 +93,12 @@ export async function runSteps(keys, o = {}) {
   paint();
 
   try {
-    for (const k of keys) {
-      step = names[k] || k;
+    for (const k of jobs) {
+      step = k.name || step;
       seen = 0;
       at = { completed: 0, total: 0 };
       paint();
-      const r = await api(`/api/projects/${state.projectId}/stages/${k}/run`,
-                          { method: "POST" });
+      const r = await api(k.url, { method: "POST" });
       for (;;) {
         await new Promise((z) => setTimeout(z, POLL));
         const j = await api(`/api/jobs/${r.job_id}`);
@@ -88,12 +112,13 @@ export async function runSteps(keys, o = {}) {
           seen = j.log.length;
         }
         if (!j.running) {
-          if (j.error) throw new Error(`${names[k] || k}: ${j.error}`);
+          if (j.error) throw new Error(k.name ? `${k.name}: ${j.error}` : j.error);
+          last = j.result || null;
           break;
         }
       }
     }
-    if (onDone) onDone();
+    if (onDone) onDone(last);
     return true;
   } catch (e) {
     toast(String(e.message || e), "err");

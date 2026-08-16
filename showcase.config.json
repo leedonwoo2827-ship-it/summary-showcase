@@ -7,14 +7,16 @@
     "link": "claude-sonnet-5",
     "decisions": "claude-opus-5",
     "script": "claude-opus-5",
-    "theme": "claude-opus-5"
+    "theme": "claude-opus-5",
+    "imgprompt": "claude-opus-5"
   },
   "effort": {
     "caption": "medium",
     "link": "medium",
     "decisions": "high",
     "script": "high",
-    "theme": "medium"
+    "theme": "medium",
+    "imgprompt": "medium"
   },
   "budget_usd": {
     "per_stage": 1.5,
@@ -44,5 +46,16 @@
     "seed_hex": "#9a4d33",
     "max_single_file_mb": 10,
     "single_file_audio": "opus32"
+  },
+  "capture": {
+    "mode": "html",
+    "fig_sec": 3.0
+  },
+  "image": {
+    "aspect": "landscape",
+    "accent_a": "#1F4E79",
+    "accent_b": "#9DC3E6",
+    "negative": "watermark, logo, low quality, distorted, extra limbs",
+    "swap": false
   }
 }

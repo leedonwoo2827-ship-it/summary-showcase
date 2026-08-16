@@ -23,7 +23,9 @@ import pipeline.s0a_ask     # noqa: F401
 import pipeline.s1_frames   # noqa: F401
 import pipeline.s2_repo     # noqa: F401
 import pipeline.s2b_outline # noqa: F401
+import pipeline.s2c_capture # noqa: F401
 import pipeline.s3_caption  # noqa: F401
+import pipeline.s3a_imgprompt  # noqa: F401
 import pipeline.s3b_images  # noqa: F401
 import pipeline.s5_decisions  # noqa: F401
 import pipeline.s6_script   # noqa: F401
@@ -32,6 +34,7 @@ import pipeline.s8_assemble # noqa: F401
 import pipeline.s9_render   # noqa: F401
 import pipeline.s10_tts     # noqa: F401
 import pipeline.s11_audio   # noqa: F401
+import pipeline.s12_video   # noqa: F401
 
 
 class Job:

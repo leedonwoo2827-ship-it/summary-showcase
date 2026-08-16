@@ -231,7 +231,7 @@ export async function mount(root) {
         //   없다. 있으면 캡처 문으로 바로 가서 설문·기획서·구조설계를 건너뛴다.
         const hasHtmlRef = ((p.refs || {}).items || []).some((it) => it.kind === "html");
         if (hasHtmlRef) {
-          await captureFlow();
+          askKind();
         } else {
           phase2();
         }
@@ -249,7 +249,45 @@ export async function mount(root) {
   /* ── HTML 참고자료 → 화면 캡처로 씬 바로 확정 ──────────────
    * 설문·기획서·AI 구조설계를 전부 건너뛴다 — h2 경계가 이미 그 판단이다.
    * S2c(s2c-capture) 한 단계만 돌고 바로 현황판으로 간다. */
-  async function captureFlow() {
+  /* ── 어느 종류의 원고인가 — **문 앞에서 정한다** ──────────────────────
+   * 원고를 넣자마자 묻는 이유: 그림 파일은 **번호로** 이름이 붙는다(`003.png` =
+   * 3번 장). 나중에 정하면 번호가 이미 흔들린 뒤라 만들어 둔 그림이 남의 장
+   * 것이 된다. 여기서 정하면 목차가 서는 순간 번호도 같이 선다.
+   *
+   * ★ 「영상 섞기」는 여기 없다. 영상은 **덱이 아니라 장의 성질**이라, 목차가
+   *   선 뒤에 그 장에만 붙인다(현황판의 «영상» 칸). 여기에 세 번째 버튼을 두면
+   *   고르는 순간엔 아무것도 안 달라지고, 나중에 또 장마다 붙여야 한다.
+   */
+  function askKind() {
+    body.textContent = "";
+    const s = section("2", "어떤 원고인가요", "고르면 장을 나눕니다. 나중에 바꿔도 됩니다");
+    const box = el("div", "kind-pick");
+
+    const pick = (title, desc, swap, primary) => {
+      const b = el("button", "btn kind-card" + (primary ? " primary" : ""));
+      b.type = "button";
+      b.append(el("strong", null, title), el("span", null, desc));
+      b.onclick = () => {
+        box.querySelectorAll("button").forEach((x) => (x.disabled = true));
+        captureFlow(swap);
+      };
+      return b;
+    };
+
+    box.append(
+      pick("html 원고", "글이 줄마다 차례로 뜹니다. 글자가 선명하고 표도 그대로입니다.",
+           false, true),
+      pick("이미지 원고", "장마다 그림 한 판이 글을 대신합니다. 그림은 뒤에 만들어 넣습니다.",
+           true, false));
+    s.appendChild(box);
+
+    const tip = el("p", "kind-tip");
+    tip.textContent = "영상은 여기서 안 고릅니다 — 목차가 선 뒤에 장마다 붙입니다.";
+    s.appendChild(tip);
+    body.appendChild(s);
+  }
+
+  async function captureFlow(swap) {
     body.textContent = "";
     const s = section("2", "씬 만드는 중", "참고자료를 장별로 캡처해 씬을 확정합니다");
     const log = el("div", "srun");
@@ -267,6 +305,13 @@ export async function mount(root) {
     const tail = el("div", "srun-tail");
     log.appendChild(tail);
     try {
+      // ★ 장을 나누기 **전에** 종류를 박는다. 조립(s8)이 이 값을 읽어 장마다
+      //   `image_swap` 을 세우고, 현황판이 그것으로 «그림으로 갈 원고» 칸을 만든다.
+      if (swap) {
+        await api(`/api/projects/${pid}/image-swap`, {
+          method: "POST", body: {image_swap: true},
+        });
+      }
       const ok = await runSteps(["s2c-capture"], {
         onLog: (lines) => {
           for (const x of lines) tail.appendChild(el("div", "srun-t", x));

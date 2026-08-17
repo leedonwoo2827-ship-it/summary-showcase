@@ -104,6 +104,21 @@ def sino(n: int) -> str:
 
 _NUM_RE = re.compile(r"(\d[\d,]*)(\.\d+)?")
 
+# 숫자 뒤에 붙는 조사·서술격 — **단위 이름이 아니다.**
+# ★ 둘을 갈라야 하는 이유가 둘이다(2026-08-17 · 20장에서 소리로 드러났다).
+#     `1달러`  → `한 달러`   「달러」의 `달` 이 고유어 단위 「달」로 걸렸다
+#     `1로 두면` → `일 로`   조사 앞인데 단위인 줄 알고 한 칸 띄웠다
+#     `2입니다`  → `이 입니다`
+#   긴 것부터 본다 — `으로` 가 `로` 보다 먼저다.
+_JOSA_HEADS = ("으로", "부터", "까지", "보다", "처럼", "이나", "이며", "이고",
+               "로", "은", "는", "이", "가", "을", "를", "의", "에", "와", "과",
+               "만", "씩", "째", "나", "밖", "입", "였")
+
+
+def _josa_next(s: str) -> bool:
+    """뒤에 오는 것이 조사·서술격인가 — 단위 이름이 아니라."""
+    return any(s.startswith(j) for j in _JOSA_HEADS)
+
 
 def speak_numbers(text: str) -> str:
     """글 속의 **아라비아 숫자를 소리대로** 바꾼다. 발음 대본 전용.
@@ -133,7 +148,12 @@ def speak_numbers(text: str) -> str:
         # 뒤에 붙은 단위를 본다 — 고유어로 세는 것이 따로 있다
         unit = ""
         for u in _NATIVE_UNIT:
-            if tail.startswith(u):
+            if not tail.startswith(u):
+                continue
+            # ★ 단위 이름이 **거기서 끝나야** 한다. `달러` 의 앞 글자가 「달」과
+            #   같다고 고유어로 세면 `1달러` 가 「한 달러」가 된다.
+            rest = tail[len(u):]
+            if not rest or not ("가" <= rest[0] <= "힣") or _josa_next(rest):
                 unit = u
                 break
 
@@ -151,15 +171,53 @@ def speak_numbers(text: str) -> str:
         else:
             said = sino(n)
 
-        # 단위가 바로 붙어 있으면 한 칸 띄운다 — 「천구백육십년」보다 잘 읽힌다
+        # 단위가 바로 붙어 있으면 한 칸 띄운다 — 「천구백육십년」보다 잘 읽힌다.
+        # 조사 앞에서는 안 띄운다 — 「일 로 두면」·「이 입니다」가 그렇게 나왔다.
         nxt = tail[:1]
-        return said + (" " if nxt and not nxt.isspace() and nxt not in ",.·)]%" else "")
+        gap = (nxt and not nxt.isspace() and nxt not in ",.·)]%"
+               and not _josa_next(tail))
+        return said + (" " if gap else "")
 
     out = _NUM_RE.sub(one, text or "")
     # ★ 기호도 말로 바꾼다. `250%` 는 숫자만 풀면 「이백오십%」로 남는데, TTS 가
     #   `%` 를 읽어 주지 않는다(2026-08-17 · 20장에서 그대로 나갔다).
     #   앞 공백을 같이 먹어서 「오십  퍼센트」로 두 칸이 되지 않게 한다.
     return re.sub(r"\s*%", lambda m: "퍼센트" if m.start() == 0 else " 퍼센트", out)
+
+
+# 괄호와 그 안 — 자막에는 있고 소리에는 없다
+# ★ `국내총생산(GDP)은` 을 그대로 읽으면 「국내총생산 괄호 지디피 괄호 은」이
+#   된다. 자막은 눈으로 읽는 글이라 괄호가 쓸모 있지만 소리에는 군더더기다
+#   (2026-08-17: "자막에는 괄호가 있거나 불필요한 글자가 있을 수도 있거든요").
+# ★ 앞 공백을 같이 먹는다 — `실질 GDP (물가 조정)는` 이 `실질 GDP는` 이 되게.
+_PAREN = re.compile(r"[ \t]*[(\[（［][^)\]）］]*[)\]）］]")
+
+
+def for_speech(text: str) -> str:
+    """자막 원문 → **발음 대본.** 이 앱에서 그 변환은 여기 한 곳뿐이다.
+
+        자막   국내총생산(GDP)은 1929년에 250% 늘었다.
+        발음   국내총생산은 천구백이십구 년에 이백오십 퍼센트 늘었습니다.
+
+    세 가지를 순서대로 한다.
+
+        1. 괄호와 그 안을 걷는다      소리에는 군더더기다
+        2. 문장 끝을 하십시오체로     이미 높임이면 안 건드린다
+        3. 숫자·기호를 소리대로       1929년 → 천구백이십구 년 · % → 퍼센트
+
+    ★ 순서가 있다. 괄호를 먼저 걷어야 `…이다(주석).` 의 문장 끝이 제대로 보이고,
+      어미를 먼저 바꿔야 숫자 뒤 단위가 어긋나지 않는다.
+
+    ★ **전체판과 장별판이 같은 것을 쓴다.** 규칙이 두 벌이면 언젠가 서로 다르게
+      읽는다 — 한쪽으로 굽고 다른 쪽으로 검수하게 된다.
+
+    ★ 몇 번을 돌려도 같은 글이다.
+    """
+    if not text:
+        return text
+    t = _PAREN.sub("", text)
+    t = re.sub(r"[ \t]{2,}", " ", t)
+    return speak_numbers(to_polite(t)).strip()
 
 
 def josa(word: str, with_jong: str, without_jong: str) -> str:

@@ -29,7 +29,8 @@ from pydantic import BaseModel
 from core import (activity, config, htmldoc, manuscript as ms, refs as refs_mod,
                   versions, workspace as ws)
 from core.jobs import get_registry
-from pipeline.registry import (STAGES, cached_data, read_cache,
+from pipeline.registry import (STAGES, cache_path, cached_data,
+                               narration_of, read_cache,
                                stage_states, write_cache)
 import pipeline.s0_prd     # noqa: F401
 import pipeline.s0a_ask    # noqa: F401
@@ -1629,17 +1630,89 @@ def speak_numbers_api(body: SpeakIn) -> Dict[str, str]:
     return {"text": honorific.speak_numbers(body.text or "")}
 
 
-@app.post("/api/to-polite")
-def to_polite_api(body: SpeakIn) -> Dict[str, str]:
-    """자막 원문을 **발음 대본**으로 — 문장 끝 어미만 하십시오체로.
+@app.post("/api/pronounce")
+def pronounce_api(body: SpeakIn) -> Dict[str, str]:
+    """자막 원문을 **발음 대본**으로 — 괄호·어미·숫자·기호를 한 번에.
 
-    ★ 대본 단계(`s6_script`)가 원고에 하는 것과 **같은 변환**이다. 한 장만
-      다시 만들고 싶을 때 전체를 다시 굽지 않게 하는 창구다.
-    ★ 몇 번을 돌려도 같은 글이 나온다 — 이미 높임으로 끝난 문장은 안 건드린다
-      (2026-08-17 에 `합니다` 가 `합니입니다` 로 불어나던 것을 고쳤다).
+    ★ 대본 단계(`s6_script`)가 쓰는 것과 **같은 함수**다. 한 장만 다시 만들고
+      싶을 때 전체를 다시 굽지 않게 하는 창구다.
+    ★ 몇 번을 돌려도 같은 글이 나온다.
     """
     from core import honorific
-    return {"text": honorific.to_polite(body.text or "")}
+    return {"text": honorific.for_speech(body.text or "")}
+
+
+@app.post("/api/projects/{pid}/pronounce-all")
+def pronounce_all(pid: int, apply: bool = False) -> Dict[str, Any]:
+    """**덱 전체**의 발음 대본을 지금 자막에서 다시 만든다.
+
+    ★ 왜 자막과 갈랐나 — 손이 가는 순서가 「자막을 읽고 고친다 → 그 자막대로
+      발음을 만든다」이기 때문이다(2026-08-17 지시). 한 번에 만들면 자막을
+      고쳐도 발음은 옛 자막에서 나온 채로 남는다.
+    ★ Claude 를 부르지 않는다. 결정론이라 공짜이고 몇 초다 — 자막을 고칠 때마다
+      다시 눌러도 손해가 없다.
+    ★ `apply=false` 면 **세어만 본다.** 무엇이 덮이는지 먼저 말하고 묻는다 —
+      이 앱에서 조용히 덮은 적이 있고(시각 186개), 그 뒤로는 늘 먼저 말한다.
+
+    손편집(`deck.overrides.json`)의 발음은 **지운다.** 안 지우면 손편집이 늘
+      이겨서 다시 만든 것이 화면에 안 보인다 — 20장에서 실제로 그랬다.
+      자막 손편집은 건드리지 않는다. 그것이 이 변환의 재료다.
+    """
+    from core import honorific
+    doc = _find(pid)
+    slug = doc["slug"]
+    env = read_cache(pid, slug, "s6-script")
+    if not env or not (env.get("data") or {}).get("slides"):
+        raise HTTPException(status_code=400, detail="대본을 먼저 만드세요")
+
+    cps = float((doc.get("narration") or config.load()["narration"])
+                .get("chars_per_sec", 5.7))
+    now = narration_of(pid, slug)          # 손편집이 얹힌 지금 값
+    ov = ws.load_overrides(pid, slug)
+    ov_slides = ov.get("slides") or {}
+    slides = (env["data"]["slides"])
+
+    changed, hand, plan = 0, 0, {}
+    for key, cur in now.items():
+        srt = (cur.get("srt_text") or "").strip()
+        if not srt:
+            continue
+        new = honorific.for_speech(srt)
+        if new == (cur.get("text") or "").strip():
+            continue
+        changed += 1
+        # 손으로 고쳐 둔 발음이 있는 장 — 덮이는 것이 이것이다
+        if "text" in ((ov_slides.get(key) or {}).get("narration") or {}):
+            hand += 1
+        plan[key] = new
+
+    if not apply:
+        return {"ok": True, "n": len(now), "changed": changed, "hand": hand,
+                "sample": [{"no": int(k), "text": v[:70]}
+                           for k, v in list(plan.items())[:3]]}
+
+    for key, new in plan.items():
+        row = slides.get(key) or {}
+        row["narration_text"] = new
+        row["narration_seconds"] = round(
+            len(re.sub(r"\s", "", new)) / max(cps, 0.1), 1)
+        slides[key] = row
+        # 손편집의 발음만 걷는다 — 자막 손편집은 재료라서 그대로 둔다
+        nar = (ov_slides.get(key) or {}).get("narration")
+        if isinstance(nar, dict) and "text" in nar:
+            nar.pop("text", None)
+            if not nar:
+                ov_slides[key].pop("narration", None)
+            if not ov_slides[key]:
+                ov_slides.pop(key, None)
+
+    env["data"]["slides"] = slides
+    env["at"] = datetime.now().isoformat(timespec="seconds")
+    ws.write_json(cache_path(pid, slug, "s6-script"), env)
+    if hand:
+        ov["slides"] = ov_slides
+        ws.save_overrides(pid, slug, ov)
+    return {"ok": True, "n": len(now), "changed": changed, "hand": hand}
 
 
 # ── 장별 음성 ──────────────────────────────────────────────────────────────

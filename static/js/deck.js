@@ -89,7 +89,16 @@ export const meta = {
     const bgm = bgmButton();
     bgm.prepend(stepBadge(DECK.bgm, "배경음악 — 굽기 전에 정합니다. 안 넣어도 됩니다"));
 
-    const [sBtn, sLab] = mkRun(DECK.script, "발음대본 생성", "글을 읽는 말로 — 발음 교정 포함");
+    const [sBtn, sLab] = mkRun(DECK.script, "자막 대본 생성",
+                               "화면에 보이는 원문 — 여기서 글이 정해집니다");
+
+    /* ★ **자막과 발음을 가른다**(2026-08-17 지시). 손이 가는 순서가 「자막을 읽고
+     * 고친다 → 그 자막대로 발음을 만든다」이기 때문이다. 한 번에 만들면 자막을
+     * 고쳐도 발음은 옛 자막에서 나온 채로 남는다 — 20장 2장에서 실제로 그랬다.
+     * 스테이지가 아니라 창구를 부른다. Claude 를 안 부르는 결정론이라 공짜이고
+     * 몇 초다 — 자막을 고칠 때마다 다시 눌러도 손해가 없다. */
+    const [pBtn, pLab] = mkRun(DECK.speech, "발음 대본 생성",
+                               "그 자막을 소리 나는 대로 — 괄호 · 어미 · 숫자 · 퍼센트");
 
     const [bBtn, bLab] = mkRun(DECK.bake, "음성/자막 굽기", "음성 합성 · 자막 · 조립 · 파일 빌드");
     bBtn.classList.add("primary");
@@ -110,18 +119,21 @@ export const meta = {
      * 눌리면 같은 산출물에 잡 둘이 동시에 손을 대 꼬인다 — 실제로 겪은 사고다
      * (2026-08-13). 눌린 버튼만 시계를 보여 주고, 나머지 셋(배경음악 포함)은
      * 도는 동안 통째로 잠근다 — `disabled` 라 커서도 자동으로 손모양이 빠진다. */
-    sBtn.onclick = () => runChain(SCRIPT, sBtn, sLab, [bgm, bBtn], "발음대본 생성", "대본이 나왔습니다");
-    bBtn.onclick = () => runChain(BAKE, bBtn, bLab, [bgm, sBtn], "음성/자막 굽기", "완성본이 나왔습니다");
+    sBtn.onclick = () => runChain(SCRIPT, sBtn, sLab, [bgm, pBtn, bBtn],
+                                  "자막 대본 생성", "자막이 나왔습니다");
+    pBtn.onclick = () => pronounceAll(pBtn, pLab, [bgm, sBtn, bBtn]);
+    bBtn.onclick = () => runChain(BAKE, bBtn, bLab, [bgm, sBtn, pBtn],
+                                  "음성/자막 굽기", "완성본이 나왔습니다");
 
     /* ★ **낡았는지를 버튼이 말해야 한다.** 슬라이드를 고쳐 놓고 안 구운 채로
      * 발표하러 가는 것이 이 앱에서 제일 비싼 실수다. */
     const chip = el("span", "bakechip");
     chip.hidden = true;
-    const mark = () => markBake(chip, sBtn, sLab, bBtn, bLab, next);
+    const mark = () => markBake(chip, sBtn, sLab, pBtn, pLab, bBtn, bLab, next);
     mark();
     window.addEventListener("focus", mark);
 
-    return [view, print, bgm, sBtn, chip, bBtn, next];
+    return [view, print, bgm, sBtn, pBtn, chip, bBtn, next];
   },
 };
 
@@ -224,7 +236,7 @@ function mkRun(n, name, tip) {
  *   (2026-08-14 실측). 무엇을 믿어야 할지 알 수 없으면 둘 다 안 믿게 된다.
  *   판정은 한 곳에서만 한다 — 「덱보다 앞선 것이 지금 완성작보다 나중에 고쳐졌나」.
  */
-async function markBake(chip, sBtn, sLab, bBtn, bLab, next) {
+async function markBake(chip, sBtn, sLab, pBtn, pLab, bBtn, bLab, next) {
   if (!state.projectId) return;
   let a = null;
   try { a = await api(`/api/projects/${state.projectId}/activity`); }
@@ -243,16 +255,17 @@ async function markBake(chip, sBtn, sLab, bBtn, bLab, next) {
     return t ? `${n}. ${t.label}${t.why ? ` (${t.why} 뒤)` : ""}` : "";
   };
 
-  const s5 = put(sBtn, sLab, "발음대본 생성", DECK.script);
-  const s6 = put(bBtn, bLab, "음성/자막 굽기", DECK.bake);
+  const s5 = put(sBtn, sLab, "자막 대본 생성", DECK.script);
+  const s6 = put(pBtn, pLab, "발음 대본 생성", DECK.speech);
+  const s7 = put(bBtn, bLab, "음성/자막 굽기", DECK.bake);
 
   /* 6번이 **다 끝났을 때만** 다음 자리를 안내한다. 끝나기 전에 보이면 "지금
      눌러도 되나" 를 생각하게 되고, 눌러 보면 아직 아무것도 없다. */
   if (next) next.hidden = !(ran.has(DECK.bake) && !old.has(DECK.bake));
 
   chip.hidden = false;
-  const stale = [s5, s6].filter((x) => x && x !== "안 함");
-  if (s5 === "안 함" || s6 === "안 함") {
+  const stale = [s5, s6, s7].filter((x) => x && x !== "안 함");
+  if (s5 === "안 함" || s7 === "안 함") {
     chip.className = "bakechip";
     chip.textContent = "아직 안 구웠습니다";
   } else if (stale.length) {
@@ -261,6 +274,45 @@ async function markBake(chip, sBtn, sLab, bBtn, bLab, next) {
   } else {
     chip.className = "bakechip ok";
     chip.textContent = "완성본이 지금 슬라이드와 같습니다";
+  }
+}
+
+/* 덱 전체의 발음 대본을 지금 자막에서 다시 만든다.
+ *
+ * ★ 스테이지가 아니라 창구다 — Claude 를 안 부르는 결정론이라 몇 초다.
+ *   그래서 `runSteps` 의 시계·로그를 붙이지 않는다. 몇 분 걸리는 것과 몇 초
+ *   걸리는 것에 같은 옷을 입히면, 사람이 「이것도 오래 걸리나」로 읽는다.
+ *
+ * ★ **덮기 전에 무엇이 사라지는지 말한다.** 손으로 고쳐 둔 발음이 있는 장을
+ *   먼저 세어 보여 주고 묻는다. 이 앱에서 조용히 덮은 적이 있고(시각 186개),
+ *   그 뒤로는 늘 먼저 말한다.
+ */
+async function pronounceAll(btn, label, group) {
+  const lock = (v) => { btn.disabled = v; group.forEach((g) => { g.disabled = v; }); };
+  const was = label.textContent;
+  lock(true);
+  try {
+    const p = await api(`/api/projects/${state.projectId}/pronounce-all`,
+                        {method: "POST"});
+    if (!p.changed) { toast("이미 지금 자막대로입니다 — 바뀔 것이 없습니다"); return; }
+    const lost = p.hand
+      ? `\n\n★ 그중 ${p.hand}장은 손으로 고쳐 두신 발음입니다 — 덮입니다.`
+      : "";
+    const eg = (p.sample || []).map((s) => `  ${s.no}장  ${s.text}…`).join("\n");
+    if (!confirm(`${p.n}장 가운데 ${p.changed}장의 발음이 바뀝니다.${lost}\n\n`
+                 + `${eg}\n\n자막은 건드리지 않습니다. 계속할까요?`)) return;
+    label.textContent = "만드는 중…";
+    const r = await api(
+      `/api/projects/${state.projectId}/pronounce-all?apply=true`, {method: "POST"});
+    toast(`${r.changed}장의 발음 대본을 다시 만들었습니다`
+          + (r.hand ? ` (손편집 ${r.hand}장 덮음)` : "")
+          + " — 이제 «음성/자막 굽기»");
+    location.reload();
+  } catch (e) {
+    toast("만들지 못했습니다: " + e.message, "err");
+  } finally {
+    label.textContent = was;
+    lock(false);
   }
 }
 
@@ -955,7 +1007,7 @@ export async function mount(root, ctx) {
         if (!src) { toast("자막이 비어 있습니다"); return; }
         mk.disabled = true;
         try {
-          const r = await api("/api/to-polite", {method: "POST", body: {text: src}});
+          const r = await api("/api/pronounce", {method: "POST", body: {text: src}});
           const cur = pron.value.trim();
           if (cur === r.text) { toast("이미 이 글입니다"); return; }
           // ★ 손으로 고친 발음을 조용히 덮지 않는다 — 무엇이 사라지는지 보여 준다

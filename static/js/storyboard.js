@@ -51,10 +51,12 @@ export async function storyboard(stageHost, rowsHost, cueHost, no) {
        한 장을 확정하는 데 필요한 것은 다 이 화면에 있어야 한다. */
   if (!d.still) {
     const b = el("div", "sb sb-need");
-    b.appendChild(el("div", "sb-need-x",
-      "스토리보드를 쓰려면 지정기를 한 번 만들어야 합니다 — "
-      + "영상에서 장마다 스틸을 뽑고 글자 자리를 상자로 찍어 둡니다"));
-    const mk = el("button", "btn sm");
+    const x = el("div", "sb-need-x", "마스킹을 하려면 먼저 지정기를 만드세요");
+    x.appendChild(el("i", null,
+      "영상에서 장마다 스틸을 뽑고 글자 자리를 상자로 찍어 둡니다 — "
+      + "1~2분 걸리고, 한 번만 하면 됩니다"));
+    b.appendChild(x);
+    const mk = el("button", "btn primary");
     mk.type = "button";
     mk.append(icon("external", 12), el("span", null, "지정기 만들고 열기"));
     mk.title = "영상에서 스틸을 뽑아 새 창으로 엽니다 — 한 번만 하면 됩니다";

@@ -922,6 +922,10 @@ export async function mount(root, ctx) {
     pron.rows = 4;
     pron.value = (s.narration && s.narration.text) || "";
     pron.placeholder = "비우면 자막을 그대로 읽습니다";
+    /* ★ 맞춤법 검사를 끈다. 이 칸은 **일부러 맞춤법을 안 지키는 자리**다 —
+       「대가」를 「대까」로, 「GDP」를 「지디피」로 적는다. 검사기는 그걸 전부
+       틀렸다고 표시해서, 정작 눈으로 잡아야 할 것이 빨간 줄에 묻힌다. */
+    pron.spellcheck = false;
     pron.oninput = () => edit(okey(s), ["narration", "text"], pron.value);
     g2.appendChild(pron);
 

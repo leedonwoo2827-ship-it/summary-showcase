@@ -119,6 +119,7 @@ const KIND_MENU = [
   {kind: null,         label: "슬라이드 텍스트", color: "#9a4d33", go: "/text"},
   {kind: "html",       label: "+ 원고 HTML",   color: "#7d6a55", go: "/html"},
   {kind: "text_image", label: "+ 삽입 이미지",  color: "#c0714f", go: "/image"},
+  {kind: "thumb",      label: "+ 썸네일",      color: "#8a7f9a", go: "/image"},
   {kind: "video",      label: "+ 삽입 영상",    color: "#5c6b62", go: "/video"},
 ];
 let lanesKey = "";

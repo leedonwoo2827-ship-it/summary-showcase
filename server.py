@@ -366,6 +366,53 @@ def get_youtube(pid: int) -> Dict[str, Any]:
     return {"ok": True, "text": txt, "file": ""}
 
 
+@app.get("/api/projects/{pid}/youtube/thumbs")
+def youtube_thumbs(pid: int) -> Dict[str, Any]:
+    """썸네일 후보 — 스튜디오가 낸 두 벌(후킹형·차분형)을 고르게 한다.
+
+    ★ 지시문을 두 벌 내므로(`render/thumbnail.py`) 그림도 두 장 온다. 어느 쪽이
+      나은지는 장마다 달라 기계가 고를 일이 아니다 — 나란히 놓고 사람이 고른다.
+    """
+    doc = _find(pid)
+    slug = doc["slug"]
+    img = ws.step_dir(pid, slug, "images", create=False)
+    dist = ws.step_dir(pid, slug, "dist", create=False)
+    picked = (dist / "썸네일.png")
+
+    out: List[Dict[str, Any]] = []
+    if img.is_dir():
+        for f in sorted(img.glob("썸네일*.png")):
+            out.append({
+                "name": f.name,
+                # 「썸네일-후킹형.png」 → 「후킹형」
+                "kind": re.sub(r"^썸네일[-_]?|\.png$", "", f.name) or f.stem,
+                "mb": round(f.stat().st_size / 1e6, 1),
+                "url": f"/api/projects/{pid}/file/{ws.STEPS['images'][0]}/{f.name}",
+            })
+    return {"thumbs": out, "picked": picked.name if picked.is_file() else "",
+            "picked_url": (f"/api/projects/{pid}/file/{ws.STEPS['dist'][0]}/썸네일.png"
+                           if picked.is_file() else "")}
+
+
+@app.post("/api/projects/{pid}/youtube/thumb/pick")
+def youtube_thumb_pick(pid: int, name: str) -> Dict[str, Any]:
+    """고른 한 장을 완성본 폴더에 `썸네일.png` 로 앉힌다.
+
+    ★ 옮기지 않고 **복사한다.** 후보는 그대로 두어야 나중에 다른 쪽으로 바꿀 수 있다.
+    """
+    import shutil as _sh
+
+    doc = _find(pid)
+    slug = doc["slug"]
+    src = ws.safe_child(ws.step_dir(pid, slug, "images", create=False), name)
+    if src is None or not src.is_file():
+        raise HTTPException(status_code=404, detail=f"없는 파일입니다: {name}")
+    dst = ws.step_dir(pid, slug, "dist") / "썸네일.png"
+    _sh.copy2(src, dst)
+    return {"ok": True, "picked": name, "file": str(dst),
+            "url": f"/api/projects/{pid}/file/{ws.STEPS['dist'][0]}/썸네일.png"}
+
+
 @app.post("/api/projects/{pid}/youtube/thumb")
 def make_thumb(pid: int) -> Dict[str, Any]:
     """썸네일용 **원고 한 장**(.md)을 완성 폴더에 내고 그 폴더를 연다.

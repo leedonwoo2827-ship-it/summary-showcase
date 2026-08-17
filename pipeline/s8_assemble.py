@@ -172,7 +172,7 @@ def compose(pid: int, slug: str, project: Dict[str, Any]) -> tuple[Dict[str, Any
             elif rel:
                 warn.append(f"{no}번 장: 원고를 못 찾음 — {rel}")
 
-        if sl.get("media_kind") in ("text_image", "html"):
+        if sl.get("media_kind") in ("text_image", "thumb", "html"):
             # ★ 한 장에 여러 그림. `image` 는 첫 장(예전 화면 호환), `images` 가 전부다.
             # ★ `html` 장에도 붙인다. 붙이기만 하고 **쓸지 말지는 렌더러가 정한다**
             #   (`image_swap`). 여기서 거르면 그림이 와 있는지조차 화면에서 알 수 없다.

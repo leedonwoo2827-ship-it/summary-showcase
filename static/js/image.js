@@ -52,7 +52,7 @@ export async function mount(root, ctx) {
     return;
   }
   const slides = ((deck.ready && deck.slides) || [])
-    .filter((s) => s.media_kind === "text_image" && !s.drop);
+    .filter((s) => (s.media_kind === "text_image" || s.media_kind === "thumb") && !s.drop);
   if (!slides.length) {
     const box = el("div", "empty");
     box.appendChild(el("p", null, "그림이 들어갈 장이 없습니다."));

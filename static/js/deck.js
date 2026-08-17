@@ -370,6 +370,7 @@ export async function mount(root, ctx) {
   /* ★ 유형 필터 — 사이드바의 유형과 **같은 축**이다.
    * "그림 넣을 장만 훑기" 같은 일이 실제로 많다. 유형을 고르면 번호 탭도 그 유형만 남는다. */
   const KINDS = [["text", "텍스트"], ["html", "+원고"], ["text_image", "+이미지"],
+               ["thumb", "+썸네일"],
                  ["video", "+영상"], ["code", "+코드"]];
   const kindRow = el("div", "kindrow");
   let kindFilter = null;

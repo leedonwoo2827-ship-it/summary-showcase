@@ -54,7 +54,7 @@ PROMPT_FMT = 6
 # 그림이 들어갈 수 있는 레인.
 #   html        원고 장 — 몸통을 그림 한 판으로 갈아끼운다
 #   text_image  예전 캡처 레인 — 글 옆에 그림이 붙는다
-WANT_MEDIA = ("html", "text_image")
+WANT_MEDIA = ("html", "text_image", "thumb")
 
 # ★ 라벨을 벌려 놓는 여섯 갈래. 본보기(NotebookLM 슬라이드 20쪽)를 재어 보니
 #   이 여섯이 되풀이된다. 「알아서 배치하라」고 두면 죄다 상단에 몰아 놓는다.

@@ -233,30 +233,53 @@ export async function showYoutube(out, opt = {}) {
   box.appendChild(ta);
   if (r.file) box.appendChild(el("div", "imgdrop-path", r.file));
 
-  /* ★ 썸네일 지시문 — 슬라이드 그림과 **같은 아홉 칸**이라 이미지 스튜디오에
-     그대로 넣으면 된다. 세 벌(물음형·대비형·글자중심)을 내고 골라 쓰게 한다.
-     경로를 클립보드에 담아 두는 이유는 슬라이드 그림 쪽과 같다 — 스튜디오는
-     「출력 폴더」에 경로를 붙여넣어야 한다. */
+  /* ★ 썸네일 **고르기.** 지시문을 두 벌 내므로(`render/thumbnail.py`) 그림도 두 장
+     온다 — 후킹형과 차분형. 어느 쪽이 나은지는 장마다 달라 기계가 고를 일이
+     아니다(2026-08-17: "썸네일 이미지를 고를 수 있게 해주세요").
+     고르면 완성본 폴더에 `썸네일.png` 로 앉는다 — 옮기지 않고 복사하므로
+     나중에 다른 쪽으로 바꿀 수 있다. */
   const bar = el("div", "imgdrop-bar");
-  const th = el("button", "btn");
-  th.type = "button";
-  th.append(icon("image", 14), el("span", null, "썸네일 원고 만들기"));
-  th.onclick = async () => {
-    th.disabled = true;
-    try {
-      const t = await api(`/api/projects/${pid}/youtube/thumb`, {method: "POST", body: {}});
-      try { await navigator.clipboard.writeText(t.dir); } catch { /* 권한 없으면 넘어간다 */ }
-      toast(`썸네일 원고를 만들었습니다 — 폴더 경로를 복사했습니다`);
-      bar.appendChild(el("div", "imgdrop-path", t.file));
-      await api(`/api/projects/${pid}/reveal?step=dist`, {method: "POST", body: {}})
-        .catch(() => { /* 못 열어도 경로는 손에 있다 */ });
-    } catch (e) {
-      toast("썸네일 지시문을 만들지 못했습니다: " + e.message, "err");
-    } finally {
-      th.disabled = false;
-    }
-  };
-  bar.appendChild(th);
   box.appendChild(bar);
+  const shelf = el("div", "yt-thumbs");
+  box.appendChild(shelf);
+
+  async function drawThumbs() {
+    let t;
+    try { t = await api(`/api/projects/${pid}/youtube/thumbs`); } catch { return; }
+    shelf.textContent = "";
+    if (!(t.thumbs || []).length) {
+      shelf.appendChild(el("div", "dc-muted",
+        "썸네일이 아직 없습니다 — 09_이미지/썸네일프롬프트.json 을 스튜디오에 넣고 "
+        + "받은 그림을 같은 폴더에 «썸네일-후킹형.png» 처럼 넣으세요"));
+      return;
+    }
+    shelf.appendChild(el("div", "sb-cues-h",
+      `썸네일 ${t.thumbs.length}장 — 눌러서 고르세요`
+      + (t.picked ? ` · 지금 «${t.picked}»` : "")));
+    for (const x of t.thumbs) {
+      const c = el("button", "yt-th" + (t.picked && x.name === t.picked ? " on" : ""));
+      c.type = "button";
+      const im = el("img");
+      im.loading = "lazy"; im.src = x.url; im.alt = x.kind;
+      c.append(im, el("span", "yt-th-k", `${x.kind} · ${x.mb}MB`));
+      c.onclick = async () => {
+        try {
+          await api(`/api/projects/${pid}/youtube/thumb/pick?name=${encodeURIComponent(x.name)}`,
+                    {method: "POST"});
+          toast(`«${x.kind}» 을 썸네일로 정했습니다 — 완성본 폴더에 썸네일.png`);
+          drawThumbs();
+        } catch (e) { toast("고르지 못했습니다: " + e.message, "err"); }
+      };
+      shelf.appendChild(c);
+    }
+  }
+  drawThumbs();
+
+  const open = el("button", "btn sm");
+  open.type = "button";
+  open.append(icon("folder", 12), el("span", null, "그림 폴더 열기"));
+  open.onclick = () => api(`/api/projects/${pid}/reveal?step=images`, {method: "POST", body: {}})
+    .catch((e) => toast("열지 못했습니다: " + e.message, "err"));
+  bar.appendChild(open);
   out.appendChild(box);
 }

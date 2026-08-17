@@ -2255,3 +2255,12 @@ label.check input { width: auto; }
   background: var(--paper); color: var(--text-3); font-size: 11px;
   font-variant-numeric: tabular-nums; }
 .sb-done.on { background: var(--ok-wash); color: var(--ok); font-weight: 700; }
+/* 썸네일 고르기 — 두 벌을 나란히 놓고 사람이 고른다 */
+.yt-thumbs { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
+.yt-th { flex: 0 0 auto; width: 220px; padding: 6px; border: 0; cursor: pointer;
+  border-radius: 10px; background: var(--paper); text-align: left;
+  box-shadow: inset 0 0 0 1px var(--hairline-2); }
+.yt-th img { display: block; width: 100%; height: auto; border-radius: 6px; }
+.yt-th-k { display: block; margin-top: 5px; font-size: 11px; color: var(--text-3); }
+.yt-th.on { box-shadow: inset 0 0 0 2px var(--ok); background: var(--ok-wash); }
+.yt-th.on .yt-th-k { color: var(--ok); font-weight: 700; }

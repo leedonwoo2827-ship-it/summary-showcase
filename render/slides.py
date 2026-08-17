@@ -111,7 +111,7 @@ def _media(s: Dict[str, Any], res) -> str:
                 f' data-at="{esc(json.dumps(ats))}">'
                 f'<div class="doc">{frag}</div></figure>')
 
-    if kind == "text_image":
+    if kind in ("text_image", "thumb"):
         shots = [x for x in (s.get("images") or ([s["image"]] if s.get("image") else [])) if x]
         if shots:
             # ★ 여러 장이면 대본 시간을 나눠 차례로 넘어간다 —
@@ -189,12 +189,18 @@ def _slide(s: Dict[str, Any], lane_i: int, total: int, res) -> str:
     #   ★ `.s-media.vplay:not(.s-shots)` 의 "재생하면 글 칸이 접힌다" 는 이 장에
     #     이제 안 걸린다 — 접을 글 칸 없이 처음부터 통짜라 접을 것이 없다.
     cls = "s" + (" s-media" if media else "") + (
-        " s-shots" if s.get("media_kind") in ("text_image", "html", "video") else "")
+        " s-shots" if s.get("media_kind") in ("text_image", "thumb", "html", "video") else "")
     # ★ 그림으로 갈아낀 장은 **화면 전체가 그림**이다(1920×1080 한 판). 상자 안에
     #   앉히면 오른쪽·아래에 흰 여백이 남는데, 그건 "통으로 갈아낀다" 가 아니다
     #   (2026-08-14: "이걸 원하는 게 아니라니까"). 제목만 그 위에 얹힌다.
     if "m-swap" in media:
         cls += " s-swap"
+    # ★ 썸네일 장(표지·마무리)은 **s-swap 과 다르다.** 그쪽은 3:2 액자에 넣고
+    #   둘레에 바탕을 까는 방식이라, 물려 쓰면 그 여백이 그대로 따라온다.
+    #   여기는 액자가 없다 — 화면 네 귀퉁이까지 그림이 덮고 제목도 안 띄운다
+    #   (2026-08-17: "위에 텍스트 안 보이게 전체 화면에 강제로 늘려서 꽉 차게").
+    if "m-pic" in media:
+        cls += " s-pic"
 
     return (
         f'<section class="{cls}" data-no="{no}" data-src="{s.get("src_no") or no}"'
@@ -526,6 +532,24 @@ p{margin:0 0 11px;font-size:clamp(14px,1.15vw,17px);color:#4a453f;max-width:62ch
      남는 오른쪽(≈23.5vw)이 아바타 자리다. */
 .s.s-shots.s-swap .m-shots.m-swap{height:min(88.5vh,calc(94vh - 62px));
   width:auto;aspect-ratio:3/2;max-width:none;margin-left:-3.23vw}
+/* ★ 썸네일 장 — **화면을 네 귀퉁이까지 그림이 덮는다.**
+     액자도 여백도 제목도 없다. 표지·마무리는 그 자체가 한 장의 그림이고,
+     그림 안에 이미 제목이 인쇄돼 있어 위에 또 띄우면 제목이 둘이 된다.
+   ★ 받아 오는 비율이 제각각이다(표지 1672×941 ≒16:9 · 마무리 1536×1024 =3:2).
+     `contain` 이면 남는 쪽에 흰 자리가, `cover` 면 잘린다. 사람이 **늘려서라도
+     꽉 채우라** 고 정했다(2026-08-17) — `fill` 이다. */
+/* ★ `position` 을 건드리지 않는다. `.s` 가 이미 `absolute; inset:0` 으로 화면
+     전체를 차지하는데, 여기서 `relative` 로 덮었더니 그 규칙이 풀려 장 높이가
+     100px 로 주저앉았다(2026-08-17 실측). padding 만 걷는다. */
+.s.s-pic{padding:0;background:#fff}
+.s.s-pic>.wrap{padding:0;margin:0;max-width:none;width:100%;height:100%;
+  display:block;place-items:stretch}
+.s.s-pic>.wrap>h2,.s.s-pic>.wrap>header,.s.s-pic .txt{display:none}
+.s.s-pic .cols{display:block;grid-template-columns:none;gap:0;height:100%}
+.s.s-pic .m-shots.m-pic{position:absolute;inset:0;width:100%;height:100%;
+  margin:0;max-width:none;border-radius:0;background:transparent;overflow:hidden}
+.s.s-pic .m-shots.m-pic img{position:absolute;inset:0;
+  width:100%;height:100%;object-fit:fill}
 /* 상단 한 줄 — 제목과 로고가 나란히 설 자리. 로고를 넣을 때 이 줄에 붙이면 된다 */
 .s.s-swap>.wrap>h2{margin:0 0 1.3vh;padding-left:6px;line-height:1.25;
   font-size:clamp(18px,1.56vw,30px)}

@@ -198,9 +198,11 @@ _DEFS: List[Stage] = [
     #   자동으로 고정 문구를 받는다. 이미 만든 프로젝트에 적용하고 싶으면 그때
     #   이 숫자를 올리거나 s6 를 강제로 다시 돌린다 — 나머지 장은 캐시에서
     #   나오므로 돈은 안 든다.
+    # code_version 2 — 하십시오체 변환기가 이미 존댓말인 문장을 또 바꾸던 것을
+    # 고쳤다(`합니다` → `합니입니다`). 원고를 그대로 살려 쓰게 되면서 드러났다.
     Stage("s6-script", "내레이션 대본", "script", "claude",
           deps=["s2b-outline", "s5-decisions"], prompt="script.md",
-          reads=["items", "narration", "language", "models"], code_version=1),
+          reads=["items", "narration", "language", "models"], code_version=2),
     # ★ 그림 지시문과 그림 받기를 **가른다.** 지시문 쓰기는 Claude 를 부르고
     #   (돈이 든다 · 자동 실행하면 안 된다), 받기는 결정론이라 낡으면 저절로
     #   돈다. 한 단계에 묶으면 그림 한 장 넣을 때마다 지시문을 다시 사게 된다.

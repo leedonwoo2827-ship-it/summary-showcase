@@ -296,15 +296,20 @@ def run(job, pid: int, slug: str, project: Dict[str, Any], *, force: bool = Fals
         #   원고가 돌아와도 옛 대본을 붙들고 있었다(2026-08-17 실측: 원고 6,100자가
         #   되살아났는데 대본은 Claude 가 쓴 2,169자 그대로였다).
         #   사람이 화면에서 고친 것은 오버라이드에 따로 얹히므로 여기서 안 잃는다.
-        if old and old.get("from") == "원고":
-            continue
-        if old and clean(old.get("srt_text")) == t:
-            continue                       # 이미 이 원고 그대로다 — 다시 쓸 것 없다
         # ★ **발음 대본만 하십시오체로.** 원고는 책에 싣는 글이라 해라체
         #   (`~이다·~한다`)로 쓰인다. 그대로 읽히면 낭독이 아니라 통보로 들린다.
         #   자막은 원고 그대로 둔다 — 화면 글과 소리가 서로 다른 표기를 갖는 것이
         #   이 앱의 원래 설계다(위 모듈 주석의 세 텍스트).
         spoken = honorific.to_polite(t)
+        # ★ 넘어가는 조건은 **원고와 발음이 둘 다 지금 것과 같을 때**다.
+        #   「출처가 원고면 넘어간다」로 두면 원고가 그대로여도 **변환기가 바뀐
+        #   것을 못 따라간다.** 2026-08-17 에 `합니다` 를 `합니입니다` 로 바꾸던
+        #   버그를 고쳤는데, 그 검사가 먼저 걸려서 고친 변환기가 32장에 닿지
+        #   않았다(182개 문장이 그대로 남았다).
+        #   사람이 화면에서 고친 것은 오버라이드에 따로 얹히므로 여기서 안 잃는다.
+        if (old and clean(old.get("srt_text")) == t
+                and clean(old.get("narration_text")) == clean(spoken)):
+            continue                       # 이미 이 원고를 이 변환기로 만들어 뒀다
         from_ms[str(s["no"])] = {
             "srt_text": t, "narration_text": spoken,
             "narration_seconds": est_sec(spoken, cps),

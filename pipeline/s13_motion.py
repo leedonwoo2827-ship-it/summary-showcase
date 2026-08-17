@@ -369,9 +369,14 @@ def scene_of(pid: int, slug: str, no: int) -> Dict[str, Any]:
     mp4 = target(pid, slug)
     out: Dict[str, Any] = {"no": no, "W": 1920, "H": 1080, "len": 0.0,
                            "boxes": [], "cues": _cues(pid, slug, no),
-                           "still": None, "has_zones": False}
+                           "still": None, "has_zones": False, "mp4": False}
     if mp4 is None:
         return out
+    # ★ 영상은 있는데 스틸이 아직 없는 것과, 영상 자체가 없는 것은 **다르다.**
+    #   앞은 「지정기 만들기」를 눌러야 하는 상태이고 뒤는 여기서 할 일이 없다.
+    #   가르지 않으면 화면이 둘 다 조용히 사라져, 사람이 모션 화면까지 가서야
+    #   무엇을 눌러야 하는지 알게 된다(2026-08-17).
+    out["mp4"] = True
     if still_of(pid, slug, no) is not None:
         out["still"] = f"/api/projects/{pid}/motion/still/{no}"
 

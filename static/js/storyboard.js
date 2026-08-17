@@ -42,7 +42,38 @@ export async function storyboard(stageHost, rowsHost, cueHost, no) {
   } catch {
     return null;                       // 모션을 안 쓰는 프로젝트 — 조용히 넘어간다
   }
-  if (!d || !d.still) return null;     // 아직 영상을 안 구웠다
+  if (!d || !d.mp4) return null;       // 아직 영상을 안 구웠다 — 여기서 할 일이 없다
+
+  /* ── 영상은 있는데 스틸이 없다 ─────────────────────────────
+     ★ 이 자리에 지정기를 둔다. 스틸은 지정기를 만들 때 같이 뽑히는데, 예전에는
+       화면이 조용히 사라져서 **모션 화면까지 가야** 그걸 알 수 있었다
+       (2026-08-17: "각 슬라이드장에 음성 슬라이드별로 실행하는 데에 모여 있게").
+       한 장을 확정하는 데 필요한 것은 다 이 화면에 있어야 한다. */
+  if (!d.still) {
+    const b = el("div", "sb sb-need");
+    b.appendChild(el("div", "sb-need-x",
+      "스토리보드를 쓰려면 지정기를 한 번 만들어야 합니다 — "
+      + "영상에서 장마다 스틸을 뽑고 글자 자리를 상자로 찍어 둡니다"));
+    const mk = el("button", "btn sm");
+    mk.type = "button";
+    mk.append(icon("external", 12), el("span", null, "지정기 만들고 열기"));
+    mk.title = "영상에서 스틸을 뽑아 새 창으로 엽니다 — 한 번만 하면 됩니다";
+    mk.onclick = async () => {
+      mk.disabled = true;
+      const sp = mk.querySelector("span");
+      const was = sp.textContent;
+      sp.textContent = "만드는 중…";
+      try {
+        await api(`/api/projects/${state.projectId}/motion/picker`, {method: "POST"});
+        toast("지정기를 엽니다 — 상자를 찍고 이 화면을 새로고침하세요");
+      } catch (e) {
+        toast("만들지 못했습니다: " + e.message, "err");
+      } finally { sp.textContent = was; mk.disabled = false; }
+    };
+    b.appendChild(mk);
+    rowsHost.appendChild(b);
+    return null;                       // 스틸이 없으니 미리보기는 그대로 둔다
+  }
 
   /* ── 자막을 문장별로 펼친다 ─────────────────────────────
      ★ 자막이 한 덩이 textarea 로만 있으면 **몇 초에 무슨 말인지** 알 수가 없다.

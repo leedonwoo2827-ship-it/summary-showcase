@@ -32,7 +32,54 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from core import config, htmldoc, workspace as ws
-from pipeline.registry import STAGES, write_cache
+from pipeline.registry import STAGES, read_cache, write_cache
+
+# ★ **원고에서만 나올 수 있는 칸.** 이 목록이 유일한 출처다.
+#
+#   이걸 한 곳에 모은 이유 — 목차(s2b) 캐시를 쓰는 자리가 셋이고, 그중 둘이
+#   차례로 이 칸들을 날렸다(2026-08-17, 같은 버그를 세 번 고쳤다):
+#     1. 원고 구조 읽기        여기. 원고를 읽어 심는다
+#     2. 구조 설계(s2b)        Claude 가 다시 짠다 — 덮으면서 잃었다
+#     3. 「이 목차로 확정」     화면에서 온 목록으로 다시 쓴다 — 화면은 이 칸을
+#                              안 들고 있어서 통째로 사라졌다
+#   그래서 원고 5,620자가 대본 2,095자(6.2분)로 줄었다. 세 자리 다 아래
+#   `manuscript_map()` 으로 되살린다.
+KEEP_FIELDS = ("say", "read", "img", "data_id", "html_file", "html_sec",
+               "html_blocks", "html_text", "html_chars", "html_tags",
+               "html_at", "html_at_default")
+
+
+def manuscript_map(pid: int, slug: str) -> Dict[str, Dict[str, Any]]:
+    """장 번호(문자열) → 원고가 실어 온 칸들.
+
+    ★ **원고 쪽(`s2c-capture`)이 먼저다.** 그 캐시는 목차를 쓰는 어느 자리도
+      건드리지 않으므로, 목차가 몇 번 덮여도 원본이 남아 있다. 옛 목차 캐시는
+      보조로만 본다 — 손으로 끼운 장처럼 원고에 없는 것이 거기 있을 수 있다.
+    """
+    out: Dict[str, Dict[str, Any]] = {}
+    prev = ((read_cache(pid, slug, "s2b-outline") or {}).get("data") or {})
+    for s in (prev.get("slides") or []):
+        out[str(s.get("no"))] = {k: s[k] for k in KEEP_FIELDS if k in s}
+    src = ((read_cache(pid, slug, "s2c-capture") or {}).get("data") or {})
+    for s in (src.get("from_manuscript") or []):
+        k = str(s.get("no"))
+        out[k] = {**out.get(k, {}),
+                  **{a: b for a, b in s.items()
+                     if a in KEEP_FIELDS and b not in ("", None, [])}}
+    return out
+
+
+def restore(slide: Dict[str, Any], src: Optional[Dict[str, Any]]) -> int:
+    """빈 칸만 되살린다. 되살린 개수(`say` 만 센다)."""
+    if not src:
+        return 0
+    got = 0
+    for k in KEEP_FIELDS:
+        if not str(slide.get(k) or "").strip() and str(src.get(k) or "").strip():
+            slide[k] = src[k]
+            if k == "say":
+                got = 1
+    return got
 
 APP = Path(__file__).resolve().parent.parent
 CAPTURE_SCRIPT = APP / "tools" / "capture_sections.mjs"
@@ -300,10 +347,7 @@ def run(job, pid: int, slug: str, project: Dict[str, Any], *, force: bool = Fals
     #   비면 되살릴 원본이 없어졌다(2026-08-17 실측: 21장 원고 5,620자(17분)가
     #   대본 2,095자(6.2분)가 됐다. 20장도 같은 길이었다).
     #   원고가 원본이다. 여기 남겨 두면 구조 설계를 몇 번 돌려도 되살아난다.
-    keep = ("no", "say", "read", "img", "data_id", "html_file", "html_sec",
-            "html_blocks", "html_text", "html_chars", "html_tags",
-            "html_at", "html_at_default")
-    src = [{k: s[k] for k in keep if k in s} for s in slides]
+    src = [{k: s[k] for k in ("no",) + KEEP_FIELDS if k in s} for s in slides]
 
     return write_cache(pid, slug, "s2c-capture",
                        input_hash=stage.input_hash(pid, slug, project),

@@ -1194,13 +1194,23 @@ def post_outline(pid: int, body: OutlineIn) -> Dict[str, Any]:
         raise HTTPException(status_code=400, detail="구조 설계를 먼저 돌리세요")
     data = dict(env["data"])
 
+    # ★ **원고가 실어 온 칸을 되살린다.** 화면이 보내는 것은 번호·제목·갈래뿐이라
+    #   `say`(그 장에서 말할 것)·줄 시각·그림 이름표가 통째로 빠져 있다. 그대로
+    #   쓰면 대본 단계가 빈 것을 보고 Claude 에게 새로 쓰게 하고, 열일곱 분짜리
+    #   원고가 여섯 분짜리 대본이 된다(2026-08-17 실측 · 21장에서 실제로 났다).
+    #   되살릴 원본은 원고 쪽 캐시다 — 목차를 몇 번 덮어도 거긴 안 바뀐다.
+    from pipeline.s2c_capture import manuscript_map, restore
+    keep = manuscript_map(pid, slug)
+
     # 1부터 다시 매긴다. 옛 번호 → 새 번호를 기억해 둔다.
     remap: Dict[str, str] = {}
     slides: List[Dict[str, Any]] = []
+    kept = 0
     for i, s in enumerate(body.slides, 1):
         d = s.model_dump()
         if d["no"]:
             remap[str(d["no"])] = str(i)
+            kept += restore(d, keep.get(str(d["no"])))
         d["no"] = i
         slides.append(d)
     data["slides"] = slides
@@ -1229,7 +1239,7 @@ def post_outline(pid: int, body: OutlineIn) -> Dict[str, Any]:
     doc["outline_confirmed_at"] = datetime.now().isoformat(timespec="seconds")
     doc["overrides_rev"] = int(doc.get("overrides_rev") or 0) + 1
     ws.save_project(pid, slug, doc)
-    return {"ok": True, "slides": len(slides), "sections": len(secs)}
+    return {"ok": True, "slides": len(slides), "sections": len(secs), "kept": kept}
 
 
 class OutlineImport(BaseModel):

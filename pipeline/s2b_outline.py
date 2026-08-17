@@ -330,29 +330,15 @@ def run(job, pid: int, slug: str, project: Dict[str, Any], *, force: bool = Fals
     #    19장이 초기에 5분대였던 것도 같은 일이었다.)
     # ★ 제목·순서·예산은 이 단계가 정하는 것이니 그대로 덮는다. **원고에서만
     #   나올 수 있는 칸**만 되살린다.
-    KEEP = ("say", "read", "html", "html_file", "html_sec", "html_blocks",
-            "html_text", "html_chars", "html_tags", "html_at", "html_at_default",
-            "data_id", "img")
+
     # ★ 되살릴 원본은 **원고가 남긴 것**이 먼저다(`s2c-capture` 의 `from_manuscript`).
     #   예전에는 옛 s2b 캐시만 봤는데, 그 자리는 이 단계가 덮는 자리라 한 번 비면
     #   되살릴 것이 영영 없어진다 — 21장이 그렇게 17분 원고에서 6.2분 대본이 됐다
     #   (2026-08-17). 원고 쪽은 이 단계가 손대지 않으니 몇 번을 돌려도 남아 있다.
-    prev = ((read_cache(pid, slug, "s2b-outline") or {}).get("data") or {})
-    old = {str(s.get("no")): dict(s) for s in (prev.get("slides") or [])}
-    src = ((read_cache(pid, slug, "s2c-capture") or {}).get("data") or {})
-    for s in (src.get("from_manuscript") or []):
-        k = str(s.get("no"))
-        old[k] = {**(old.get(k) or {}), **{a: b for a, b in s.items() if b not in ("", None)}}
-    kept = 0
-    for s in (data.get("slides") or []):
-        o = old.get(str(s.get("no")))
-        if not o:
-            continue
-        for k in KEEP:
-            if not str(s.get(k) or "").strip() and str(o.get(k) or "").strip():
-                s[k] = o[k]
-                if k == "say":
-                    kept += 1
+    from pipeline.s2c_capture import manuscript_map, restore
+    old = manuscript_map(pid, slug)
+    kept = sum(restore(s, old.get(str(s.get("no"))))
+               for s in (data.get("slides") or []))
     if kept:
         job.add_log(f"원고가 들고 온 대본 {kept}장 — 덮지 않고 지킵니다")
 

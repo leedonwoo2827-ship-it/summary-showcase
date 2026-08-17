@@ -155,7 +155,11 @@ def speak_numbers(text: str) -> str:
         nxt = tail[:1]
         return said + (" " if nxt and not nxt.isspace() and nxt not in ",.·)]%" else "")
 
-    return _NUM_RE.sub(one, text or "")
+    out = _NUM_RE.sub(one, text or "")
+    # ★ 기호도 말로 바꾼다. `250%` 는 숫자만 풀면 「이백오십%」로 남는데, TTS 가
+    #   `%` 를 읽어 주지 않는다(2026-08-17 · 20장에서 그대로 나갔다).
+    #   앞 공백을 같이 먹어서 「오십  퍼센트」로 두 칸이 되지 않게 한다.
+    return re.sub(r"\s*%", lambda m: "퍼센트" if m.start() == 0 else " 퍼센트", out)
 
 
 def josa(word: str, with_jong: str, without_jong: str) -> str:

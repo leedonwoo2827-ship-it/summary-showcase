@@ -289,13 +289,16 @@ const sections = await page.evaluate(({ HEIGHT, START, LEVELS }) => {
          data-id   안 바뀌는 장 이름표(`sam19-03`). 그림 프롬프트를 번호가 아니라
                    여기에 매단다 — 앞에 장이 끼어들어도 그림이 안 어긋난다
          data-say  그 장에서 말할 문장. 화면 문구가 아니라 화면에 안 적힌 연결이다
-         data-img  그 장 그림의 영어 지시문. 있으면 조립하지 않고 그대로 쓴다 */
+         data-img  그 장 그림의 영어 지시문. 있으면 조립하지 않고 그대로 쓴다
+         data-read 소리 나는 대로 적은 발음 대본. 숫자·약어가 이미 풀려 있다.
+                   있으면 이것이 TTS 입력이 되고, `data-say` 는 자막으로 남는다 */
     items.push({
       no, title: cleanTitle(h), group: h.tagName === "H2" ? "" : group,
       q: qn ? parseInt(qn.textContent.trim(), 10) || 0 : 0,
       did: h.getAttribute("data-id") || "",
       say: h.getAttribute("data-say") || "",
       img: h.getAttribute("data-img") || "",
+      read: h.getAttribute("data-read") || "",
       html: host.innerHTML, blocks, overflow, empty: n === 0,
     });
     no += 1;
@@ -518,6 +521,7 @@ for (const s of sections) {
     + `${s.did ? ` data-id="${esc(s.did)}"` : ""}`
     + `${s.say ? ` data-say="${esc(s.say)}"` : ""}`
     + `${s.img ? ` data-img="${esc(s.img)}"` : ""}`
+    + `${s.read ? ` data-read="${esc(s.read)}"` : ""}`
     + `${s.overflow ? " data-overflow=\"1\"" : ""}>`
     + `<h2 class="hs-t">${esc(s.title)}`
     + `${s.q ? `<i class="qb">${s.q}</i>` : ""}</h2>`
@@ -557,7 +561,7 @@ const manifest = {
       // ★ 이름은 snake_case 다 — 원장(`core/ledger.py`)이 `data_id` 를 키로 쓰고,
       //   여기서 이름이 갈리면 옮겨 담는 코드가 한 겹 더 생긴다.
       //   원고가 안 보내면 빈 문자열이다(문제집 원고에는 셋 다 없다).
-      data_id: s.did, say: s.say, img: s.img,
+      data_id: s.did, say: s.say, img: s.img, read: s.read,
       media_kind: "html", sec: s.no, overflow: s.overflow, empty: s.empty,
       est_sec: s.sec,
       blocks: s.blocks.map((b) => ({ b: b.b, tag: b.tag, chars: b.chars,

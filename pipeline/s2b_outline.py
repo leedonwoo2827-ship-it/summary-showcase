@@ -330,8 +330,9 @@ def run(job, pid: int, slug: str, project: Dict[str, Any], *, force: bool = Fals
     #    19장이 초기에 5분대였던 것도 같은 일이었다.)
     # ★ 제목·순서·예산은 이 단계가 정하는 것이니 그대로 덮는다. **원고에서만
     #   나올 수 있는 칸**만 되살린다.
-    KEEP = ("say", "html", "html_file", "html_sec", "html_blocks", "html_text",
-            "html_chars", "html_tags", "html_at", "html_at_default", "data_id", "img")
+    KEEP = ("say", "read", "html", "html_file", "html_sec", "html_blocks",
+            "html_text", "html_chars", "html_tags", "html_at", "html_at_default",
+            "data_id", "img")
     prev = ((read_cache(pid, slug, "s2b-outline") or {}).get("data") or {})
     old = {str(s.get("no")): s for s in (prev.get("slides") or [])}
     kept = 0

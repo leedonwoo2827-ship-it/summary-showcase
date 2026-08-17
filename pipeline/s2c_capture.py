@@ -151,9 +151,15 @@ def run(job, pid: int, slug: str, project: Dict[str, Any], *, force: bool = Fals
                 #   data_id  그림 원장이 프롬프트를 매다는 키. 번호가 아니라 이것이다
                 #   say      그 장에서 말할 문장
                 #   img      그 장 그림의 영어 지시문 (s3a 가 있으면 Claude 를 안 부른다)
+                #   read     소리 나는 대로 적은 발음 대본. 숫자·약어가 이미 풀려
+                #            있다(`1929년` → `천구백이십구 년`). 있으면 이것이
+                #            그대로 TTS 입력이 되고 `say` 는 자막으로 남는다 —
+                #            **사람이 단추를 눌러서 만드는 것이 아니라 처음부터
+                #            이렇게 나와야 한다**(2026-08-17 지시).
                 "data_id": s.get("data_id") or "",
                 "say": s.get("say") or "",
                 "img": s.get("img") or "",
+                "read": s.get("read") or "",
             }
             if slide["media_kind"] == "html" and doc_rel:
                 blocks = s.get("blocks") or []

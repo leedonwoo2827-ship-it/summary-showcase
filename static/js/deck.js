@@ -440,7 +440,9 @@ export async function mount(root, ctx) {
    * 보여 준다 — "7분" 이 실측인지 추정인지 모르면 그 숫자를 못 믿는다.
    * 목표 길이를 정해 두면 남거나 모자란 만큼을 바로 보여 준다.
    */
-  const LENGTHS = [10, 20, 30, 40, 60, 120];
+  // ★ 15 분 — 강의 한 편이 **15분 이상 20분 이하**로 나와야 하는 판이 있다
+  //   (2026-08-17). 10 과 20 사이가 비어 있어 목표를 못 짚었다.
+  const LENGTHS = [10, 15, 20, 30, 40, 60, 120];
   const totals = () => {
     let real = 0, est = 0, nReal = 0;
     for (const s of slides) {

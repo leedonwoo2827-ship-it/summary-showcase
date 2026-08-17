@@ -24,7 +24,7 @@ from typing import Any, Dict, List
 
 from core import config, refs as refs_mod, workspace as ws
 from llm.claude_provider import ClaudeProvider
-from pipeline.registry import STAGES, cached_data, write_cache
+from pipeline.registry import STAGES, cached_data, read_cache, write_cache
 
 LANE_KINDS = ("text", "text_image", "video", "code")
 SLIDE_KINDS = ("cover", "context", "feature", "architecture", "decision",
@@ -320,6 +320,32 @@ def run(job, pid: int, slug: str, project: Dict[str, Any], *, force: bool = Fals
         job.add_log(f"  버림 · {d}")
     if data.get("dropped"):
         job.add_log(f"예산에 못 담은 것 {len(data['dropped'])}건 — 늘리면 이것부터 들어갑니다")
+
+    # ★ **원고가 넣어 둔 칸을 지킨다.** 이 단계는 s2c(원고 구조 읽기)와 **같은
+    #   캐시 자리**를 쓴다. 그런데 여기서 통째로 덮으면 원고가 실어 온 것들이
+    #   조용히 날아간다 — `say`(그 장에서 말할 것) · `html`(화면에 박히는 글) ·
+    #   줄 시각까지. 그러면 뒤에서 대본 단계가 빈 것을 보고 Claude 에게 새로
+    #   쓰게 하고, 열아홉 분짜리 원고가 여섯 분짜리 대본이 된다.
+    #   (2026-08-17 실측: 20장 원고 6,249자(19분)가 대본 2,169자(6.6분)로 줄었다.
+    #    19장이 초기에 5분대였던 것도 같은 일이었다.)
+    # ★ 제목·순서·예산은 이 단계가 정하는 것이니 그대로 덮는다. **원고에서만
+    #   나올 수 있는 칸**만 되살린다.
+    KEEP = ("say", "html", "html_file", "html_sec", "html_blocks", "html_text",
+            "html_chars", "html_tags", "html_at", "html_at_default", "data_id", "img")
+    prev = ((read_cache(pid, slug, "s2b-outline") or {}).get("data") or {})
+    old = {str(s.get("no")): s for s in (prev.get("slides") or [])}
+    kept = 0
+    for s in (data.get("slides") or []):
+        o = old.get(str(s.get("no")))
+        if not o:
+            continue
+        for k in KEEP:
+            if not str(s.get(k) or "").strip() and str(o.get(k) or "").strip():
+                s[k] = o[k]
+                if k == "say":
+                    kept += 1
+    if kept:
+        job.add_log(f"원고가 들고 온 대본 {kept}장 — 덮지 않고 지킵니다")
 
     return write_cache(pid, slug, "s2b-outline",
                        input_hash=stage.input_hash(pid, slug, project),

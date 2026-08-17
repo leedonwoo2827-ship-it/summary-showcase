@@ -286,11 +286,20 @@ def run(job, pid: int, slug: str, project: Dict[str, Any], *, force: bool = Fals
     #   사람이 발음 화면에서 고치면 된다.
     from_ms: Dict[str, Any] = {}
     for s in slides:
-        if str(s["no"]) in prior:
-            continue
         t = clean(s.get("say"))
         if not t:
             continue
+        old = prior.get(str(s["no"])) or {}
+        # ★ **원고가 이긴다.** 캐시에 있어도 그것이 Claude 가 쓴 것이면 원고로
+        #   갈아 끼운다. 원고는 출처이고 Claude 는 원고가 없을 때의 대타다.
+        #   예전에는 「캐시에 있으면 넘어간다」를 원고 검사보다 **먼저** 걸어서,
+        #   원고가 돌아와도 옛 대본을 붙들고 있었다(2026-08-17 실측: 원고 6,100자가
+        #   되살아났는데 대본은 Claude 가 쓴 2,169자 그대로였다).
+        #   사람이 화면에서 고친 것은 오버라이드에 따로 얹히므로 여기서 안 잃는다.
+        if old and old.get("from") == "원고":
+            continue
+        if old and clean(old.get("srt_text")) == t:
+            continue                       # 이미 이 원고 그대로다 — 다시 쓸 것 없다
         # ★ **발음 대본만 하십시오체로.** 원고는 책에 싣는 글이라 해라체
         #   (`~이다·~한다`)로 쓰인다. 그대로 읽히면 낭독이 아니라 통보로 들린다.
         #   자막은 원고 그대로 둔다 — 화면 글과 소리가 서로 다른 표기를 갖는 것이

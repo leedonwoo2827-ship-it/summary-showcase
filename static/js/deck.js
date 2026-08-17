@@ -103,6 +103,16 @@ export const meta = {
     const [bBtn, bLab] = mkRun(DECK.bake, "음성/자막 굽기", "음성 합성 · 자막 · 조립 · 파일 빌드");
     bBtn.classList.add("primary");
 
+    const rBtn = el("button", "btn sm ghost");
+    rBtn.type = "button";
+    const rLab = el("span", null, "음성 빼고 굽기");
+    rBtn.append(icon("refresh", 13), rLab);
+    rBtn.title = "자막 시각 · 덱 조립 · 완성본만 다시 만듭니다"
+      + "
+장별로 «발음대로 다시 합성» 을 이미 눌러 두셨을 때 쓰세요"
+      + "
+★ 음성을 안 건드립니다 — 듣고 OK 한 소리가 그대로 남습니다";
+
     /* ★ 7번(영상)은 **여기 두지 않는다**(2026-08-14 지시). 영상 만들기는 화면이
      * 따로 있다(`/mp4`) — 거기서 장마다 찍어 mp4 로 굽는다(S12).
      * 여기 버튼을 남겨 두면 같은 일을 하는 자리가 둘이 되고, 무엇보다 **6번이
@@ -122,8 +132,10 @@ export const meta = {
     sBtn.onclick = () => runChain(SCRIPT, sBtn, sLab, [bgm, pBtn, bBtn],
                                   "자막 대본 생성", "자막이 나왔습니다");
     pBtn.onclick = () => pronounceAll(pBtn, pLab, [bgm, sBtn, bBtn]);
-    bBtn.onclick = () => runChain(BAKE, bBtn, bLab, [bgm, sBtn, pBtn],
+    bBtn.onclick = () => runChain(BAKE, bBtn, bLab, [bgm, sBtn, pBtn, rBtn],
                                   "음성/자막 굽기", "완성본이 나왔습니다");
+    rBtn.onclick = () => runChain(RESUB, rBtn, rLab, [bgm, sBtn, pBtn, bBtn],
+                                  "음성 빼고 굽기", "자막·완성본을 다시 만들었습니다");
 
     /* ★ **낡았는지를 버튼이 말해야 한다.** 슬라이드를 고쳐 놓고 안 구운 채로
      * 발표하러 가는 것이 이 앱에서 제일 비싼 실수다. */
@@ -133,7 +145,7 @@ export const meta = {
     mark();
     window.addEventListener("focus", mark);
 
-    return [view, print, bgm, sBtn, pBtn, chip, bBtn, next];
+    return [view, print, bgm, sBtn, pBtn, chip, bBtn, rBtn, next];
   },
 };
 
@@ -212,6 +224,13 @@ function bgmButton() {
 /* 순서가 곧 규칙이다 — ① 대본을 만들고 ② 그 대본으로 굽는다. */
 const SCRIPT = ["s6-script"];
 const BAKE = ["s10-tts", "s11-audio", "s8-assemble", "s9-render"];
+/* ★ **음성을 뺀 굽기.** 장별로 「발음대로 다시 합성」을 눌러 소리를 이미 다
+ * 만들어 둔 뒤에 쓴다 — 그때 필요한 것은 자막 시각을 다시 잡고 다시 조립하는
+ * 것뿐이다(`synth_one` 이 s10 캐시의 그 칸을 이미 고쳐 놨다).
+ * 전체 굽기를 누르면 34장을 새로 합성하는데, TTS 는 같은 글도 매번 다르게
+ * 읽어서(3.73 / 3.59 / 3.55초) **듣고 OK 한 소리가 다른 소리로 바뀐다.**
+ * 예전에는 이 셋을 현황판에서 하나씩 눌러야 했다(2026-08-17 지적). */
+const RESUB = ["s11-audio", "s8-assemble", "s9-render"];
 /* 7번(영상)은 이 화면에 없다 — `/mp4` 가 맡는다(S12). */
 const BAKE_KO = {
   "s6-script": "발음대본", "s10-tts": "음성 합성", "s11-audio": "자막",

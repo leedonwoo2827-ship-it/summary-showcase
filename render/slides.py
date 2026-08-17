@@ -120,7 +120,13 @@ def _media(s: Dict[str, Any], res) -> str:
                 f'<img loading="lazy" src="{esc(res.asset(x))}" alt=""'
                 f'{" class=on" if i == 0 else ""}/>' for i, x in enumerate(shots))
             dots = ("".join("<i></i>" for _ in shots)) if len(shots) > 1 else ""
-            return (f'<figure class="m m-shots" data-n="{len(shots)}">{imgs}'
+            # ★ `m-pic` — **그림만 있는 칸.** `.m-shots` 는 16:10 상자를 고정하는데
+            #   (`padding-top:62.5%`) 그림은 3:2 라 안에 들어가면서 좌우에 흰 여백이
+            #   남는다(2026-08-17: "하얀 라인이 안 보이게 꽉 차게"). 원고 HTML 장은
+            #   그 상자가 있어야 줄 뜨는 자리가 흔들리지 않으므로, 그림만 있는 칸에만
+            #   상자를 풀고 **그림 제 비율대로** 놓는다. 자르지 않는다 — 그림 위에
+            #   헤드라인이 인쇄돼 있어 자르면 제목이 날아간다.
+            return (f'<figure class="m m-shots m-pic" data-n="{len(shots)}">{imgs}'
                     f'{f"<span class=sdots>{dots}</span>" if dots else ""}</figure>')
         return f'<div class="m m-todo">그림 대기 — {int(no):03d}.png</div>'
 
@@ -300,6 +306,15 @@ p{margin:0 0 11px;font-size:clamp(14px,1.15vw,17px);color:#4a453f;max-width:62ch
   opacity:0;transition:opacity .35s}
 .m-shots img.on{opacity:1}
 .m-shots::before{content:"";display:block;padding-top:62.5%}
+/* ★ 그림만 있는 칸 — 고정 비율 상자를 **풀고** 그림 제 비율대로 놓는다.
+     상자를 두면 3:2 그림이 16:10 칸 안에 들어가면서 좌우에 흰 띠가 남는다.
+     첫 장은 그대로 보이고(opacity 0 이면 높이가 0 이 된다), 여러 장이면
+     둘째부터만 겹쳐 놓는다 — 넘길 때 자리가 흔들리지 않게. */
+.m-pic::before{display:none}
+.m-pic img{position:static;width:100%;height:auto;object-fit:contain;display:block}
+.m-pic img:not(:first-of-type){position:absolute;inset:0;height:100%}
+.m-pic img:first-of-type{opacity:1}
+.m-pic[data-n="1"] img{opacity:1}
 
 /* ★ 캡처(text_image) 장 전용 — 텍스트 칸이 늘 비어 있으니 통짜 폭으로 쓰고,
    고정 비율 박스 없이 캡처 원래 크기 그대로 얹는다. 장마다 이미지 실제

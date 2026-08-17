@@ -1629,6 +1629,19 @@ def speak_numbers_api(body: SpeakIn) -> Dict[str, str]:
     return {"text": honorific.speak_numbers(body.text or "")}
 
 
+@app.post("/api/to-polite")
+def to_polite_api(body: SpeakIn) -> Dict[str, str]:
+    """자막 원문을 **발음 대본**으로 — 문장 끝 어미만 하십시오체로.
+
+    ★ 대본 단계(`s6_script`)가 원고에 하는 것과 **같은 변환**이다. 한 장만
+      다시 만들고 싶을 때 전체를 다시 굽지 않게 하는 창구다.
+    ★ 몇 번을 돌려도 같은 글이 나온다 — 이미 높임으로 끝난 문장은 안 건드린다
+      (2026-08-17 에 `합니다` 가 `합니입니다` 로 불어나던 것을 고쳤다).
+    """
+    from core import honorific
+    return {"text": honorific.to_polite(body.text or "")}
+
+
 # ── 장별 음성 ──────────────────────────────────────────────────────────────
 def _audio_rel(pid: int, slug: str, no: int) -> str:
     """그 장의 음성 파일 경로(프로젝트 폴더 기준). 없으면 빈 문자열.

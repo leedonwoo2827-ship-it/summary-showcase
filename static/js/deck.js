@@ -936,6 +936,44 @@ export async function mount(root, ctx) {
       ab.appendChild(el("div", "dc-muted", "대본 전"));
     }
 
+    /* ★ 자막에서 발음 대본을 **이 장만** 다시 만든다.
+       왜 필요한가 — 발음 칸은 오버라이드에 얹히고 손편집이 항상 이긴다. 그래서
+       대본을 전체로 다시 구워도 **한 번 열어 본 장은 옛 글을 붙들고 있다**
+       (2026-08-17: 변환기 버그를 고치고 34장을 다시 구웠는데 2장만 옛 글이
+       남아 있었다 — 그 장을 열었을 때 오버라이드가 생겼기 때문이다).
+       전체를 다시 굽는 대신 여기서 그 한 장을 맞춘다.
+       ★ 대본 단계와 **같은 변환**을 쓴다(`/api/to-polite`). 규칙이 두 벌이면
+       언젠가 서로 다르게 읽는다. */
+    if (s.narration && s.narration.srt_text) {
+      const mk = el("button", "btn sm ghost");
+      mk.type = "button";
+      mk.append(icon("wand", 12), el("span", null, "자막에서 발음 만들기"));
+      mk.title = "자막 원문의 문장 끝을 하십시오체로 바꿔 발음 칸에 넣습니다"
+        + "\n숫자는 안 건드립니다 — «숫자를 소리대로» 를 따로 누르세요";
+      mk.onclick = async () => {
+        const src = srt.value.trim();
+        if (!src) { toast("자막이 비어 있습니다"); return; }
+        mk.disabled = true;
+        try {
+          const r = await api("/api/to-polite", {method: "POST", body: {text: src}});
+          const cur = pron.value.trim();
+          if (cur === r.text) { toast("이미 이 글입니다"); return; }
+          // ★ 손으로 고친 발음을 조용히 덮지 않는다 — 무엇이 사라지는지 보여 준다
+          if (cur && !confirm(
+              "지금 발음 칸의 글을 버리고 자막에서 다시 만듭니다.\n\n"
+              + "지금:  " + cur.slice(0, 90) + (cur.length > 90 ? "…" : "")
+              + "\n새로:  " + r.text.slice(0, 90) + (r.text.length > 90 ? "…" : "")
+              + "\n\n숫자 읽기는 다시 눌러야 합니다.")) return;
+          pron.value = r.text;
+          edit(okey(s), ["narration", "text"], pron.value);
+          toast("발음 대본을 다시 만들었습니다 — 읽어 보고 «발음대로 다시 합성»");
+        } catch (e) {
+          toast("만들지 못했습니다: " + e.message, "err");
+        } finally { mk.disabled = false; }
+      };
+      ab.appendChild(mk);
+    }
+
     // 대본이 있으면 — 음성이 아직 없어도 — 다시 만들 수 있어야 한다
     if (s.narration && (s.narration.text || s.narration.srt_text)) {
       const rv = el("button", "btn sm");

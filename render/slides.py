@@ -311,7 +311,11 @@ p{margin:0 0 11px;font-size:clamp(14px,1.15vw,17px);color:#4a453f;max-width:62ch
      첫 장은 그대로 보이고(opacity 0 이면 높이가 0 이 된다), 여러 장이면
      둘째부터만 겹쳐 놓는다 — 넘길 때 자리가 흔들리지 않게. */
 .m-pic::before{display:none}
-.m-pic img{position:static;width:100%;height:auto;object-fit:contain;display:block}
+/* ★ `object-fit:fill` 이다(contain 이 아니다). 그림이 16:9 에 **한두 픽셀 모자라게**
+     오는 일이 있는데(실측: 1672×941 — 16:9 면 1673 이어야 한다), contain 이면 그
+     모자란 만큼이 오른쪽에 흰 세로선으로 남는다. 여기서는 칸이 곧 그림 비율이라
+     늘어나 봐야 1px 이고, 자르지 않는 편이 낫다 — 그림 위에 제목이 인쇄돼 있다. */
+.m-pic img{position:static;width:100%;height:auto;object-fit:fill;display:block}
 .m-pic img:not(:first-of-type){position:absolute;inset:0;height:100%}
 .m-pic img:first-of-type{opacity:1}
 .m-pic[data-n="1"] img{opacity:1}

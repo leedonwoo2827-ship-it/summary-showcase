@@ -294,11 +294,23 @@ def run(job, pid: int, slug: str, project: Dict[str, Any], *, force: bool = Fals
             warn_len = f"목표 {lo}~{hi}분 안에 들어옵니다"
         job.add_log(warn_len)
 
+    # ★ **원고가 실어 온 것을 여기 한 벌 남긴다.** 이 단계는 목차(s2b) 캐시를
+    #   직접 쓰는데, 나중에 구조 설계를 다시 돌리면 그 자리가 덮인다. 예전에는
+    #   구조 설계가 **옛 s2b 캐시**에서 되살렸다 — 그래서 그 사이에 한 번이라도
+    #   비면 되살릴 원본이 없어졌다(2026-08-17 실측: 21장 원고 5,620자(17분)가
+    #   대본 2,095자(6.2분)가 됐다. 20장도 같은 길이었다).
+    #   원고가 원본이다. 여기 남겨 두면 구조 설계를 몇 번 돌려도 되살아난다.
+    keep = ("no", "say", "read", "img", "data_id", "html_file", "html_sec",
+            "html_blocks", "html_text", "html_chars", "html_tags",
+            "html_at", "html_at_default")
+    src = [{k: s[k] for k in keep if k in s} for s in slides]
+
     return write_cache(pid, slug, "s2c-capture",
                        input_hash=stage.input_hash(pid, slug, project),
                        data={"slides": len(slides), "docs": len(html_items),
                              "mode": mode, "html_slides": n_html, "lines": n_line,
-                             "say_chars": say_ch, "say_min": round(say_min, 1)},
+                             "say_chars": say_ch, "say_min": round(say_min, 1),
+                             "from_manuscript": src},
                        code_version=stage.code_version, status="ok", warnings=[])
 
 

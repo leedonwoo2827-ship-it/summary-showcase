@@ -46,8 +46,10 @@ from core import config, ledger as lg, workspace as ws
 from pipeline.registry import STAGES, cached_data, write_cache
 from pipeline.s3a_imgprompt import WANT_MEDIA, slide_id
 
-# 맛보기 파일에 담을 장 수. 프롬프트 결을 보는 데는 이 정도면 된다 —
-# 첫 장(도입) · 둘째 장 · 셋째 장이면 배치 갈래도 두세 가지가 섞여 나온다.
+# 맛보기 파일에 담을 장 수. **지금은 안 쓴다** — 맛보기를 내지 않기로 했다
+# (2026-08-17, 아래 내보내기 자리 참고). 되살릴 때 쓰라고 값만 남겨 둔다.
+# 프롬프트 결을 보는 데는 셋이면 됐다 — 첫 장(도입)·둘째·셋째면 배치 갈래도
+# 두세 가지가 섞여 나온다.
 TRY_N = 3
 
 FILE_NAMING = ("생성한 이미지는 images/ 폴더에 '슬라이드번호'로 저장하세요. "
@@ -165,15 +167,35 @@ def run(job, pid: int, slug: str, project: Dict[str, Any], *, force: bool = Fals
         (d / "slides.json").unlink(missing_ok=True)      # 옛 자리에 두 벌로 남기지 않는다
         job.add_log(f"지시문 {len(rows)}개 (그림이 필요한 장 {len(targets)}개 중) → {p_all}")
 
-        # ★ **맛보기 파일** — 앞쪽 세 장만 담는다. 프롬프트 꼴을 바꿀 때마다
-        #   서른 장을 통째로 뽑아 보고 버리는 일이 되풀이됐다(2026-08-14 에 두 번,
-        #   각 27장). 스튜디오는 넣은 JSON 을 통째로 돌리므로 「몇 장만」이 안 된다 —
-        #   그러니 **파일 자체를 작게** 낸다. 이것으로 결을 보고 마음에 들면
-        #   전체 파일을 넣으면 된다. 번호가 같으니 그림도 그대로 덮어써진다.
-        p_try = ws.write_json(d / "이미지프롬프트_맛보기.json",
-                              bundle(deck=deck + " (맛보기)", cfg=cfg,
-                                     rows=rows[:TRY_N], deck_slides=total))
-        job.add_log(f"맛보기 {len(rows[:TRY_N])}장 (먼저 이것부터 돌려 보세요) → {p_try}")
+        # ★ **맛보기 파일은 안 낸다**(2026-08-17 지시: "맛보기 이후로는 안 만들게").
+        #   프롬프트 꼴이 자주 바뀌던 때는 세 장만 먼저 뽑아 결을 보는 값이 있었다.
+        #   지금은 꼴이 앉았고, 사람은 전체를 한 번에 돌린다. 그러면 이 파일은
+        #   **집어야 할 파일이 둘로 보이게** 만들 뿐이다 — 이 폴더는 열었을 때
+        #   하나만 보여야 한다(아래 「사람이 여는 자리」 규칙과 같은 이유).
+        #   되살리려면 이 자리에 다시 쓰면 된다(`TRY_N` 은 남겨 둔다).
+        (d / "이미지프롬프트_맛보기.json").unlink(missing_ok=True)
+
+        # ★ **썸네일 지시문도 여기서 낸다** — 스튜디오가 바로 먹는 꼴로 두 벌.
+        #   예전에는 원고 한 장(`유튜브썸네일-원고.txt`)을 내고 사람이 그것을
+        #   「프롬프트 생성기」에 넣어 프롬프트를 다시 짓게 했다. 한 다리를 더
+        #   건너는 만큼 결이 그때그때 달라졌다(2026-08-17 지시: "이미지 json 만들
+        #   때 썸네일 json 도 만들어 주면 유튜브 txt 는 안 만들어도 될 것 같다").
+        # ★ 봉투를 **따로** 낸다. 슬라이드 그림은 3:2 플랫 벡터이고 썸네일은
+        #   16:9 클레이메이션이라, 한 봉투에 섞으면 `style_hint` 가 전 장에
+        #   덧붙어 슬라이드까지 점토로 나온다.
+        try:
+            from render import thumbnail
+            # `_headline` 이 읽는 두 칸만 있으면 된다 — 이름표와 제목
+            th_deck = {"slides": [{"data_id": did, "title": (by_id.get(did) or {}).get("title") or ""}
+                                  for did, _ in pairs]}
+            p_th = ws.write_json(d / "썸네일프롬프트.json",
+                                 thumbnail.bundle(th_deck, title=deck, cfg=cfg,
+                                                  led=by_id,
+                                                  book=str(project.get("book") or "")))
+            job.add_log(f"썸네일 지시문 2벌(후킹형·차분형) → {p_th}")
+        except Exception as e:                      # noqa: BLE001
+            # 그림 지시문은 이미 나왔다 — 곁다리가 실패해도 그것까지 버리지 않는다
+            job.add_log(f"썸네일 지시문은 못 만들었습니다: {type(e).__name__}: {e}")
     else:
         job.add_log("지시문이 하나도 없습니다 — 그림 지시문(s3a-imgprompt)을 먼저 돌리세요")
 

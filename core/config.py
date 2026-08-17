@@ -64,9 +64,19 @@ DEFAULTS: Dict[str, Any] = {
     #   1920×1080 한 판을 그림이 채운다. 그래서 가로로 꽉 차야 한다.
     "image": {
         "aspect": "landscape",          # gpt-image 네이티브: 1536×1024 (3:2)
+        # ★ 바탕색. **강조색보다 먼저 적어야 한다** — 자세한 이유는
+        #   `s3a_imgprompt.compose()` 주석에 있다. 덱의 액자가 아이보리라
+        #   어두운 그림이 오면 한 화면에서 결이 갈린다.
+        "bg": "#F6F1E8",
         "accent_a": "#1F4E79",          # 원고 SVG 의 파랑 네 단과 같은 결로
         "accent_b": "#9DC3E6",
-        "negative": "watermark, logo, low quality, distorted, extra limbs",
+        # ★ **어두운 배경을 여기서도 막는다.** 본문에 「바탕은 반드시 밝은
+        #   아이보리」라고 적어 두었는데도 한 번씩 검은 판으로 나온다
+        #   (2026-08-17 실측: 20장 12개 중 006·010 둘. 19장에서도 003 이 그랬다).
+        #   본문은 길어서 뒤로 밀리지만 negative 는 짧아 잘 듣는다.
+        "negative": ("dark background, black background, night scene, "
+                     "dark panel, low contrast text, "
+                     "watermark, logo, low quality, distorted, extra limbs"),
         # 그림을 몸통 대신 깔까. 기본은 **꺼짐** — 켜기 전까지 지금과 똑같이 돈다.
         "swap": False,
     },

@@ -28,7 +28,7 @@ import shutil
 import subprocess
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from core import config, htmldoc, workspace as ws
 from pipeline.registry import STAGES, write_cache
@@ -256,11 +256,76 @@ def run(job, pid: int, slug: str, project: Dict[str, Any], *, force: bool = Fals
     job.add_log(f"씬 확정 — {len(slides)}장 (문서 {len(html_items)}개){extra}"
                 " · 문구·대본을 채우면 됩니다")
 
+    # ★ **여기서 길이를 말한다.** 원고의 `data-say` 가 그대로 내레이션이 되는데,
+    #   예전에는 그림·음성·영상을 다 만들고 **음성을 구운 뒤에야** 짧은 것을
+    #   알았다(2026-08-17: 20장이 6분으로 나와 되돌렸다). 원고를 넣는 이 순간이
+    #   가장 싸게 되돌릴 수 있는 자리다.
+    # ★ 초당 5.5자 — 실측값이다(voicewright F2 초당 5.47자, 19장 22.8분으로 확인).
+    #   앱 기본 추정값 3.0 은 첫 판에서 길이를 절반쯤으로 보이게 한다. 음성을 한 번
+    #   구우면 보정되지만(`s10_tts._calibrate`) 그 전에는 알 수 없으니 여기서는
+    #   실측값을 쓴다.
+    say_ch = sum(len(re.sub(r"\s", "", s.get("say") or "")) for s in slides)
+    n_say = sum(1 for s in slides if (s.get("say") or "").strip())
+    say_min = say_ch / 5.5 / 60
+    if say_ch:
+        job.add_log(f"원고 대본 {n_say}장 · {say_ch:,}자 → 약 {say_min:.1f}분")
+    else:
+        job.add_log("★ 원고에 대본(data-say)이 없습니다 — 대본을 새로 지어내게 되고 "
+                    "그러면 훨씬 짧아집니다")
+    # 목표가 원고 맨 위에 적혀 있으면(`<!-- 20장 · 목표 15~20분 -->`) 그것과 견준다
+    want = _target_min(html_items)
+    if want and say_ch:
+        lo, hi = want
+        if say_min < lo:
+            warn_len = (f"★ 목표 {lo}~{hi}분인데 지금 원고는 {say_min:.1f}분입니다 — "
+                        f"{int((lo * 60 - say_ch / 5.5) * 5.5):,}자쯤 모자랍니다. "
+                        "그림·음성으로 가기 전에 원고를 늘리세요")
+        elif say_min > hi:
+            warn_len = (f"★ 목표 {lo}~{hi}분인데 지금 원고는 {say_min:.1f}분입니다 — "
+                        "깁니다")
+        else:
+            warn_len = f"목표 {lo}~{hi}분 안에 들어옵니다"
+        job.add_log(warn_len)
+
     return write_cache(pid, slug, "s2c-capture",
                        input_hash=stage.input_hash(pid, slug, project),
                        data={"slides": len(slides), "docs": len(html_items),
-                             "mode": mode, "html_slides": n_html, "lines": n_line},
+                             "mode": mode, "html_slides": n_html, "lines": n_line,
+                             "say_chars": say_ch, "say_min": round(say_min, 1)},
                        code_version=stage.code_version, status="ok", warnings=[])
+
+
+def _target_min(html_items: List[Dict[str, Any]]) -> Optional[tuple]:
+    """원고 맨 위에 적힌 **목표 길이**. 없으면 None.
+
+    받는 꼴 — 주석이든 meta 든, 「목표」 옆에 분이 적혀 있으면 집는다.
+
+        <!-- 20장 · 목표 15~20분 -->
+        <meta name="lecture" content="20장 · 목표 15~20분">
+        <!-- 목표 18분 -->
+
+    ★ **글자 수는 앱이 직접 센다.** 원고가 알려 줄 수 없는 것은 「몇 분짜리여야
+      하는가」뿐이라, 그것만 읽는다. 없으면 길이만 알려 주고 넘어간다 — 목표를
+      안 적었다고 막을 일은 아니다(2026-08-17 지시: "없으면 네 자유인데,
+      있으면 꼭 적용해줘").
+    """
+    for it in html_items:
+        p = it.get("path")
+        if not p:
+            continue
+        try:
+            head = Path(p).read_text(encoding="utf-8", errors="replace")[:4000]
+        except OSError:
+            continue
+        m = re.search(r"목표\s*(\d+)\s*(?:~|-|–|에서)\s*(\d+)\s*분", head)
+        if m:
+            lo, hi = int(m.group(1)), int(m.group(2))
+            return (min(lo, hi), max(lo, hi)) if lo != hi else (lo, hi)
+        m = re.search(r"목표\s*(\d+)\s*분", head)
+        if m:
+            n = int(m.group(1))
+            return (n, n)
+    return None
 
 
 STAGES["s2c-capture"].run = run

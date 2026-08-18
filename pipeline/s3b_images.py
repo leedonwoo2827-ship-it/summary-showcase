@@ -120,10 +120,21 @@ def run(job, pid: int, slug: str, project: Dict[str, Any], *, force: bool = Fals
     #   막으려던 바로 그 낭비가 된다.
     need = set(fresh) | set(plan["dirty"])
 
+    # ★ **썸네일은 본문 파일에 넣지 않는다.** 봉투가 다르다 — 본문 그림은 3:2
+    #   플랫 벡터이고 썸네일은 16:9 클레이메이션이라, 같은 목록에 섞으면 스튜디오가
+    #   표지를 본문 결로 그린다(2026-08-19: 22장에서 `001.png`·`034.png` 가 본문
+    #   지시문으로 나왔다 — 본문은 2~33장이라 `002` 부터여야 한다).
+    # ★ 번호는 그대로 매긴다. 썸네일도 `001.png`·`034.png` 자리를 가지므로,
+    #   받은 그림을 그 이름으로 넣으면 여기가 알아서 집는다.
+    thumb_ids = {slide_id(slug, s) for s in targets
+                 if s.get("media_kind") == "thumb"}
+
     rows: List[Dict[str, Any]] = []
     gap: List[Dict[str, Any]] = []
     miss: List[str] = []
     for did, n in pairs:
+        if did in thumb_ids:
+            continue                 # 「썸네일프롬프트.json」으로만 나간다
         e = by_id.get(did) or {}
         prompt = (e.get("prompt") or "").strip()
         if not prompt:
@@ -165,7 +176,8 @@ def run(job, pid: int, slug: str, project: Dict[str, Any], *, force: bool = Fals
             "count": len(rows), "prompts": rows,
         })
         (d / "slides.json").unlink(missing_ok=True)      # 옛 자리에 두 벌로 남기지 않는다
-        job.add_log(f"지시문 {len(rows)}개 (그림이 필요한 장 {len(targets)}개 중) → {p_all}")
+        job.add_log(f"지시문 {len(rows)}개 "
+                    f"(본문 {len(targets) - len(thumb_ids)}장 중) → {p_all}")
 
         # ★ **맛보기 파일은 안 낸다**(2026-08-17 지시: "맛보기 이후로는 안 만들게").
         #   프롬프트 꼴이 자주 바뀌던 때는 세 장만 먼저 뽑아 결을 보는 값이 있었다.
@@ -186,8 +198,10 @@ def run(job, pid: int, slug: str, project: Dict[str, Any], *, force: bool = Fals
         try:
             from render import thumbnail
             # `_headline` 이 읽는 두 칸만 있으면 된다 — 이름표와 제목
+            # 썸네일 제목거리는 **본문에서** 뽑는다 — 표지·마무리를 넣으면
+            # 「제22장」·「마무리」가 소재로 올라와 후킹이 흐려진다
             th_deck = {"slides": [{"data_id": did, "title": (by_id.get(did) or {}).get("title") or ""}
-                                  for did, _ in pairs]}
+                                  for did, _ in pairs if did not in thumb_ids]}
             p_th = ws.write_json(d / "썸네일프롬프트.json",
                                  thumbnail.bundle(th_deck, title=deck, cfg=cfg,
                                                   led=by_id,

@@ -46,15 +46,30 @@ def find_cli() -> Optional[Path]:
         p = Path(env).expanduser()
         if p.exists():
             return p
+    # ★ **배치본(.cmd/.bat)은 SDK 가 실행을 거부한다.** Windows 에서 .cmd 는
+    #   cmd.exe 로 도는데 인자로 명령을 주입할 수 있고 안전한 이스케이프가 없다.
+    #   npm 으로 깐 `claude` 는 `claude.CMD` 라 PATH 에서 먼저 잡히는데, 그걸
+    #   집으면 **모든 Claude 단계가 통째로 실패한다**(2026-08-19: 22장 그림
+    #   지시문 34장이 전부 빈 채로 끝났고, 화면에는 「JSON 이 없다」로만 보였다).
+    #   그래서 배치본은 뒤로 미루고 네이티브를 먼저 찾는다.
+    batch: Optional[Path] = None
     if w := shutil.which("claude"):
-        return Path(w)
+        p = Path(w)
+        if p.suffix.lower() in (".cmd", ".bat"):
+            batch = p
+        else:
+            return p
+    # VSCode 확장이 네이티브 바이너리를 같이 깐다 — 설치본이 없는 PC 대비이기도 하고,
+    # npm 배치본만 있는 PC 에서는 **유일하게 쓸 수 있는 것**이다.
     pats = ["anthropic.claude-code-*/resources/native-binary/claude.exe",
             "anthropic.claude-code-*/resources/native-binary/claude"]
     for pat in pats:
         hits = sorted((Path.home() / ".vscode" / "extensions").glob(pat))
         if hits:
             return hits[-1]      # 확장 버전이 올라가면 경로가 바뀐다 → 최신 선택
-    return None
+    # 네이티브가 없으면 배치본이라도 돌려준다 — SDK 가 내는 거부 메시지가
+    # 「네이티브를 깔라」고 안내하므로, None 보다 그 메시지가 낫다.
+    return batch
 
 
 def scrubbed_env() -> Dict[str, str]:

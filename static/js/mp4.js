@@ -25,7 +25,7 @@ import { stepBadge, DECK } from "./steps.js";
 
 export const meta = {
   title: "영상 렌더링",
-  subtitle: "장마다 화면을 찍어 내레이션 길이만큼 이어 붙여 mp4 한 편을 만듭니다",
+  subtitle: "장마다 화면을 찍어 내레이션 길이만큼 이어 붙여 mp4 한 편을 만듭니다 · 음성은 모노 64k — 원본이 모노라 소리는 그대로고 76분 기준 253MB → 약 197MB(22%↓)",
 };
 
 const clock = (s) => {

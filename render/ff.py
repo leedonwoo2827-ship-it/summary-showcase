@@ -49,6 +49,16 @@ def to_opus(src: Path, dst: Path, *, kbps: int = 32) -> tuple[bool, str]:
                 "-application", "voip", str(dst)])
 
 
+# ★ **오디오는 64k 모노다.** 예전엔 192k 스테레오였는데, 합성 원본(`07_음성/tts/*.wav`)
+#   이 애초에 **44.1kHz 모노 1채널**이다 — 같은 신호를 두 채널에 복사해 넣고 값을 두 배로
+#   치르고 있었다. 76.7분짜리에서 오디오만 105MB 였다(실측: 182kbps × 4604초).
+#   모노로 내리는 것은 정보 손실이 0이고, 말소리 64k 는 방송 기준으로도 넉넉하다.
+#   ★ 이 값은 **모션까지 따라간다.** `tools/motion/remaster.py` 가 오디오를 `-c:a copy`
+#     로 그대로 물고 가기 때문이다(실측: 두 mp4 의 오디오 비트레이트가 182021 로 동일).
+#   ★ 아래 두 함수가 **같은 값**을 써야 한다 — `concat()` 이 `-c copy` 로 붙이므로
+#     조각 하나만 규격이 달라도 이어 붙이다 어긋난다.
+
+
 def image_audio_clip(image: Path, dst: Path, *, audio: Optional[Path] = None,
                      duration: float = 3.0, fps: int = 30) -> tuple[bool, str]:
     """정지 이미지 + 오디오(없으면 무음) → 그 길이만큼의 mp4 한 조각.
@@ -59,7 +69,7 @@ def image_audio_clip(image: Path, dst: Path, *, audio: Optional[Path] = None,
     """
     dst.parent.mkdir(parents=True, exist_ok=True)
     vcommon = ["-c:v", "libx264", "-tune", "stillimage", "-pix_fmt", "yuv420p",
-               "-r", str(fps), "-c:a", "aac", "-b:a", "192k", "-ar", "44100", "-ac", "2",
+               "-r", str(fps), "-c:a", "aac", "-b:a", "64k", "-ar", "44100", "-ac", "1",
                "-movflags", "+faststart"]
     if audio and audio.is_file():
         return run(["-loop", "1", "-i", str(image), "-i", str(audio),
@@ -125,7 +135,7 @@ def image_seq_audio_clip(images: List[Path], durations: List[float], dst: Path, 
     else:
         args += ["-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo"]
     args += ["-c:v", "libx264", "-tune", "stillimage", "-pix_fmt", "yuv420p",
-             "-r", str(fps), "-c:a", "aac", "-b:a", "192k", "-ar", "44100", "-ac", "2",
+             "-r", str(fps), "-c:a", "aac", "-b:a", "64k", "-ar", "44100", "-ac", "1",
              "-shortest", "-movflags", "+faststart", str(dst)]
     ok, err = run(args)
     try:

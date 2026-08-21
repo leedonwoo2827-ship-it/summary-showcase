@@ -28,7 +28,7 @@ import { showYoutube } from "./mp4.js";
 
 export const meta = {
   title: "모션",
-  subtitle: "구운 영상을 재료로 글자가 떠오르고 빛이 훑는 판을 다시 굽습니다",
+  subtitle: "구운 영상을 재료로 글자가 떠오르고 빛이 훑는 판을 다시 굽습니다 · crf 24 로 굽습니다 — 76분 기준 487MB → 약 257MB(47%↓)",
 };
 
 const mb = (n) => `${Number(n || 0).toFixed(1)}MB`;

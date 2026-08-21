@@ -322,7 +322,8 @@ p{margin:0 0 11px;font-size:clamp(14px,1.15vw,17px);color:#4a453f;max-width:62ch
      모자란 만큼이 오른쪽에 흰 세로선으로 남는다. 여기서는 칸이 곧 그림 비율이라
      늘어나 봐야 1px 이고, 자르지 않는 편이 낫다 — 그림 위에 제목이 인쇄돼 있다. */
 .m-pic img{position:static;width:100%;height:auto;object-fit:fill;display:block}
-.m-pic img:not(:first-of-type){position:absolute;inset:0;height:100%}
+.m-pic img:not(:first-of-type){position:absolute;inset:0;height:100%;
+  object-fit:cover;object-position:top center}
 .m-pic img:first-of-type{opacity:1}
 .m-pic[data-n="1"] img{opacity:1}
 
@@ -535,9 +536,12 @@ p{margin:0 0 11px;font-size:clamp(14px,1.15vw,17px);color:#4a453f;max-width:62ch
 /* ★ 썸네일 장 — **화면을 네 귀퉁이까지 그림이 덮는다.**
      액자도 여백도 제목도 없다. 표지·마무리는 그 자체가 한 장의 그림이고,
      그림 안에 이미 제목이 인쇄돼 있어 위에 또 띄우면 제목이 둘이 된다.
-   ★ 받아 오는 비율이 제각각이다(표지 1672×941 ≒16:9 · 마무리 1536×1024 =3:2).
-     `contain` 이면 남는 쪽에 흰 자리가, `cover` 면 잘린다. 사람이 **늘려서라도
-     꽉 채우라** 고 정했다(2026-08-17) — `fill` 이다. */
+   ★ 받아 오는 비율이 제각각이다(표지 1672×941 ≒16:9 · 썸네일 1536×1024 =3:2).
+     `contain` 이면 남는 쪽에 흰 자리가 남고, `fill` 이면 3:2 가 16:9 로 눌려
+     **글자가 찌그러진다** — 스튜디오에 16:9(1536×864)로 시켜도 3:2 로 온다.
+     그래서 `cover` + `object-position:top` 이다: 폭을 채우고 **아래를 자른다**.
+     글자는 그림 위쪽에 인쇄돼 있어 잘리는 쪽은 배경뿐이다
+     (2026-08-21 지시: "밑에 잘려도 좋으니까 찌그러뜨리지 말고"). */
 /* ★ `position` 을 건드리지 않는다. `.s` 가 이미 `absolute; inset:0` 으로 화면
      전체를 차지하는데, 여기서 `relative` 로 덮었더니 그 규칙이 풀려 장 높이가
      100px 로 주저앉았다(2026-08-17 실측). padding 만 걷는다. */
@@ -549,7 +553,7 @@ p{margin:0 0 11px;font-size:clamp(14px,1.15vw,17px);color:#4a453f;max-width:62ch
 .s.s-pic .m-shots.m-pic{position:absolute;inset:0;width:100%;height:100%;
   margin:0;max-width:none;border-radius:0;background:transparent;overflow:hidden}
 .s.s-pic .m-shots.m-pic img{position:absolute;inset:0;
-  width:100%;height:100%;object-fit:fill}
+  width:100%;height:100%;object-fit:cover;object-position:top center}
 /* 상단 한 줄 — 제목과 로고가 나란히 설 자리. 로고를 넣을 때 이 줄에 붙이면 된다 */
 .s.s-swap>.wrap>h2{margin:0 0 1.3vh;padding-left:6px;line-height:1.25;
   font-size:clamp(18px,1.56vw,30px)}

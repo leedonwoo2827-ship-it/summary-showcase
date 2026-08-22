@@ -175,6 +175,15 @@ def run(job, pid: int, slug: str, project: Dict[str, Any], *, force: bool = Fals
                              youtube.thumb_md(deck, title=(project.get("title") or slug),
                                               led=led, book=str(project.get("book") or "")))
         job.add_log(f"썸네일 원고: {p_th}")
+        # ★ 발음 교정표 — **손으로 정한 읽는 법**만 모은 표. 대본·문제 쓰는 사람에게
+        #   넘기면 다음 과목에서 같은 발음을 또 고칠 일이 없다. 여기서 같이 내는
+        #   이유는 유튜브 글과 같다 — 누를 것을 늘리지 않는 편이 낫고, 이 시점이면
+        #   발음 손편집은 이미 끝나 있다(장별듣기 → 영상 렌더링 순서다).
+        #   덱 화면의 「발음 교정표」 버튼과 **같은 함수**를 쓴다(`render/pronounce.build`).
+        from render import pronounce
+        pron = pronounce.build(pid, slug, title=(project.get("title") or slug))
+        p_pr = ws.write_text(ws.step_dir(pid, slug, "subtitle") / "발음교정표.txt", pron)
+        job.add_log(f"발음 교정표: {p_pr} (손으로 고친 장 {pronounce.n_hand(pron)}개)")
     except Exception as e:                      # noqa: BLE001
         # 영상은 이미 나왔다 — 곁다리가 실패해도 그것까지 실패로 만들지 않는다
         job.add_log(f"유튜브 글은 못 만들었습니다: {type(e).__name__}: {e}")

@@ -414,6 +414,35 @@ def youtube_thumb_pick(pid: int, name: str) -> Dict[str, Any]:
             "url": f"/api/projects/{pid}/file/{ws.STEPS['dist'][0]}/썸네일.png"}
 
 
+@app.post("/api/projects/{pid}/pronounce-report")
+def pronounce_report(pid: int) -> Dict[str, Any]:
+    """**손으로 정한 읽는 법**을 표로 내고 그 폴더를 연다.
+
+    ★ 왜 이 버튼이 필요한가. 발음은 두 곳에서 정해진다 — 규칙은 코드에 있고
+      (`core/honorific.py`), 예외는 **이 프로젝트 폴더에만** 있다(`Q1 → 큐원`,
+      `m1 → 엠원`). 다음 과목을 쓰는 사람은 후자를 모르니 같은 자리에서 같은
+      고민을 다시 하고, 나는 같은 발음을 또 손으로 고친다. 그것을 끊는 파일이다.
+
+    ★ 장별듣기 **뒤**, 영상 렌더링 **앞**에 놓는 이유: 손편집이 다 끝난 시점이
+      여기다. 더 앞에서 뽑으면 아직 안 고친 장이 빠지고, 더 뒤에서 뽑으면 이미
+      영상을 굽고 나서라 다음 과목에 못 쓴다.
+
+    ★ Claude 를 부르지 않는다. 결정론이라 공짜다 — 몇 번 눌러도 손해가 없다.
+    """
+    from render import pronounce
+
+    doc = _find(pid)
+    slug = doc["slug"]
+    if not narration_of(pid, slug):
+        raise HTTPException(status_code=400, detail="대본을 먼저 만드세요")
+
+    txt = pronounce.build(pid, slug, title=(doc.get("title") or slug))
+    d = ws.step_dir(pid, slug, "subtitle")
+    p = ws.write_text(d / "발음교정표.txt", txt)
+    return {"ok": True, "file": str(p), "dir": str(d),
+            "hand": pronounce.n_hand(txt)}
+
+
 @app.post("/api/projects/{pid}/youtube/thumb")
 def make_thumb(pid: int) -> Dict[str, Any]:
     """썸네일용 **원고 한 장**(.md)을 완성 폴더에 내고 그 폴더를 연다.

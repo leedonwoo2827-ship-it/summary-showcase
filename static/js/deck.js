@@ -115,6 +115,25 @@ export const meta = {
 장별로 «발음대로 다시 합성» 을 이미 눌러 두셨을 때 쓰세요
 ★ 음성을 안 건드립니다 — 듣고 OK 한 소리가 그대로 남습니다`;
 
+    /* ★ **발음 교정표.** 장별듣기가 끝난 자리에 둔다 — 손편집이 다 끝난
+     * 시점이 여기다. 더 앞에서 뽑으면 아직 안 고친 장이 빠지고, 더 뒤(영상을
+     * 구운 뒤)에서 뽑으면 이미 늦어 다음 과목에 못 쓴다.
+     *
+     * 무엇을 위한 파일인가: 발음 규칙은 코드에 있지만(`core/honorific.py`)
+     * **예외는 이 폴더에만** 있다(`Q1 → 큐원` · `m1 → 엠원`). 대본 쓰는 사람이
+     * 그것을 모르면 다음 과목에서 같은 발음을 또 손으로 고치게 된다.
+     *
+     * 굽는 버튼들과 함께 잠그지 않는다 — 파일 하나 읽어 쓰는 일이라 잡과
+     * 부딪히지 않고, 굽는 동안 표를 뽑아 보내고 싶을 때가 실제로 있다. */
+    const dBtn = el("button", "btn sm ghost");
+    dBtn.type = "button";
+    const dLab = el("span", null, "발음 교정표");
+    dBtn.append(icon("printer", 13), dLab);
+    dBtn.title = `손으로 고친 발음만 낱말 표로 뽑아 08_자막 에 냅니다
+대본·문제 쓰는 분께 넘기면 애초에 읽히는 대로 써 옵니다
+★ 장별듣기를 끝낸 뒤에 누르세요 — 그때가 손편집이 다 끝난 시점입니다`;
+    dBtn.onclick = () => pronounceReport(dBtn, dLab);
+
     /* ★ 7번(영상)은 **여기 두지 않는다**(2026-08-14 지시). 영상 만들기는 화면이
      * 따로 있다(`/mp4`) — 거기서 장마다 찍어 mp4 로 굽는다(S12).
      * 여기 버튼을 남겨 두면 같은 일을 하는 자리가 둘이 되고, 무엇보다 **6번이
@@ -147,7 +166,7 @@ export const meta = {
     mark();
     window.addEventListener("focus", mark);
 
-    return [view, print, bgm, sBtn, pBtn, chip, bBtn, rBtn, next];
+    return [view, print, bgm, sBtn, pBtn, chip, bBtn, rBtn, dBtn, next];
   },
 };
 
@@ -308,6 +327,32 @@ async function markBake(chip, sBtn, sLab, pBtn, pLab, bBtn, bLab, next) {
  *   먼저 세어 보여 주고 묻는다. 이 앱에서 조용히 덮은 적이 있고(시각 186개),
  *   그 뒤로는 늘 먼저 말한다.
  */
+/* 교정표를 내고 그 폴더를 연다.
+
+   ★ **만들었다는 말만 하지 않고 폴더를 연다.** 산출물은 앱 밖에 살고 경로도
+     길어서, 글로 알려 주면 사람이 탐색기를 직접 찾아 들어가야 한다
+     (`이미지 JSON 만들기` 가 같은 이유로 그렇게 한다). */
+async function pronounceReport(btn, label) {
+  const was = label.textContent;
+  btn.disabled = true;
+  label.textContent = "뽑는 중…";
+  try {
+    const r = await api(`/api/projects/${state.projectId}/pronounce-report`,
+                        {method: "POST"});
+    toast(r.hand
+      ? `손으로 고친 발음 ${r.hand}장 → 08_자막/발음교정표.txt`
+      : "손으로 고친 발음이 없어 표가 비었습니다");
+    await api(`/api/projects/${state.projectId}/reveal?step=subtitle`,
+              {method: "POST", body: {}})
+      .catch(() => { /* 폴더를 못 열어도 파일은 이미 나왔다 */ });
+  } catch (e) {
+    toast("뽑지 못했습니다: " + e.message, "err");
+  } finally {
+    label.textContent = was;
+    btn.disabled = false;
+  }
+}
+
 async function pronounceAll(btn, label, group) {
   const lock = (v) => { btn.disabled = v; group.forEach((g) => { g.disabled = v; }); };
   const was = label.textContent;

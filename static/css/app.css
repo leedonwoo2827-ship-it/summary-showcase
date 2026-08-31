@@ -2275,3 +2275,67 @@ label.check input { width: auto; }
 .yt-th-k { display: block; margin-top: 5px; font-size: 11px; color: var(--text-3); }
 .yt-th.on { box-shadow: inset 0 0 0 2px var(--ok); background: var(--ok-wash); }
 .yt-th.on .yt-th-k { color: var(--ok); font-weight: 700; }
+
+/* ── 발음 사전 화면 ────────────────────────────────────────────────────
+   왼쪽은 채울 것, 오른쪽은 이미 있는 것. 두 칸으로 두는 이유는 순서가 그렇기
+   때문이다 — 무엇이 빠졌는지 보고, 그 자리에서 채운다. */
+.dictwrap { padding: 0 0 60px; }
+.dict-path { color: var(--text-3); font-size: var(--t-2xs);
+  font-family: ui-monospace, Consolas, monospace; margin-right: 10px; }
+.dictcols { display: grid; grid-template-columns: 1fr 1fr; gap: 18px;
+  align-items: start; }
+@media (max-width: 1100px) { .dictcols { grid-template-columns: 1fr; } }
+.dictcol { background: var(--white); border-radius: var(--r);
+  box-shadow: inset 0 0 0 1px var(--hairline); padding: 16px 18px 18px; }
+.dictcol h3 { margin: 0 0 4px; font-size: var(--t-sm); }
+.dictcol > .muted { margin: 0 0 12px; font-size: var(--t-2xs);
+  color: var(--text-3); line-height: var(--lh); }
+.dictfind { width: 100%; margin: 0 0 10px; padding: 7px 10px;
+  border: 1px solid var(--hairline-2); border-radius: var(--r-sm);
+  font-size: var(--t-2xs); background: var(--paper); }
+/* ★ 세로로 스크롤되는 목록이다. 156개를 한 화면에 다 펴면 저장 버튼까지
+     내려가는 데만 한참이고, 찾기 칸이 화면 밖으로 밀린다. */
+.dictlist { max-height: 58vh; overflow-y: auto; display: grid;
+  grid-auto-rows: max-content; gap: 5px; }
+.dictrow { display: flex; align-items: center; gap: 8px; }
+.dictrow .dk { flex: 0 0 30%; font-family: ui-monospace, Consolas, monospace;
+  font-size: var(--t-2xs); color: var(--brand); font-weight: 700;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dictrow .dn { flex: 0 0 40px; font-size: var(--t-3xs, 11px);
+  color: var(--text-3); text-align: right; }
+.dictrow .di { flex: 1; min-width: 0; padding: 6px 9px;
+  border: 1px solid var(--hairline-2); border-radius: var(--r-sm);
+  font-size: var(--t-2xs); background: var(--paper); }
+.dictrow .di:focus { outline: none; border-color: var(--sky-500);
+  background: var(--white); }
+.dictrow .dx { flex: 0 0 22px; height: 22px; border: 0; background: none;
+  color: var(--text-3); cursor: pointer; border-radius: 4px; font-size: 15px;
+  line-height: 1; }
+.dictrow .dx:hover { background: var(--brand-wash); color: var(--brand); }
+.dictadd { display: flex; gap: 8px; margin-top: 12px; padding-top: 12px;
+  border-top: 1px solid var(--hairline); }
+.dictadd .di { flex: 1; min-width: 0; padding: 6px 9px;
+  border: 1px solid var(--hairline-2); border-radius: var(--r-sm);
+  font-size: var(--t-2xs); background: var(--paper); }
+
+/* 덱 화면 안의 접이식 사전 — 음성 줄과 제목 칸 사이 */
+.dictpanel { margin: 0 0 18px; background: var(--white); border-radius: var(--r);
+  box-shadow: inset 0 0 0 1px var(--hairline); }
+.dictpanel > summary { list-style: none; cursor: pointer; padding: 11px 16px;
+  display: flex; align-items: center; gap: 8px; font-size: var(--t-sm);
+  font-weight: 700; border-radius: var(--r); }
+.dictpanel > summary::-webkit-details-marker { display: none; }
+.dictpanel > summary:hover { background: var(--paper); }
+.dictpanel[open] > summary { border-bottom: 1px solid var(--hairline);
+  border-radius: var(--r) var(--r) 0 0; }
+.dictpanel .dp-hint { font-weight: 400; color: var(--text-3);
+  font-size: var(--t-2xs); }
+.dictpanel .dictwrap { padding: 14px 16px 16px; }
+/* 인라인에서는 목록을 짧게 — 화면이 길어지면 제목 칸이 멀어진다 */
+.dictpanel .dictlist { max-height: 34vh; }
+.dictfoot { display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; margin-top: 14px; padding-top: 12px;
+  border-top: 1px solid var(--hairline); }
+.dictfoot .muted { font-size: var(--t-2xs); color: var(--text-3); }
+.dictpanel .dp-car { transition: transform .15s; flex: 0 0 auto; color: var(--brand); }
+.dictpanel[open] .dp-car { transform: rotate(90deg); }

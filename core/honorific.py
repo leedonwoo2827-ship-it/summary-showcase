@@ -204,6 +204,7 @@ def for_speech(text: str) -> str:
         1. 괄호와 그 안을 걷는다      소리에는 군더더기다
         2. 문장 끝을 하십시오체로     이미 높임이면 안 건드린다
         3. 숫자·기호를 소리대로       1929년 → 천구백이십구 년 · % → 퍼센트
+        4. 영문을 한국어 소리로       FROM → 프롬 · GROUP BY → 그룹 바이
 
     ★ 순서가 있다. 괄호를 먼저 걷어야 `…이다(주석).` 의 문장 끝이 제대로 보이고,
       어미를 먼저 바꿔야 숫자 뒤 단위가 어긋나지 않는다.
@@ -212,12 +213,17 @@ def for_speech(text: str) -> str:
       읽는다 — 한쪽으로 굽고 다른 쪽으로 검수하게 된다.
 
     ★ 몇 번을 돌려도 같은 글이다.
+
+    ★ 영문은 **맨 마지막**이다. 먼저 바꾸면 `2.0` 의 숫자 변환이 이미 한글이 된
+      자리를 다시 훑게 되고, 어미 바꾸기가 `SELECT 한다` 같은 꼴을 놓친다.
+      표는 `core/roman.py` 가 voicewright 사전에서 읽어 온다 — 표를 두 벌 두지 않는다.
     """
     if not text:
         return text
     t = _PAREN.sub("", text)
     t = re.sub(r"[ \t]{2,}", " ", t)
-    return speak_numbers(to_polite(t)).strip()
+    from core.roman import speak_roman
+    return speak_roman(speak_numbers(to_polite(t))).strip()
 
 
 def josa(word: str, with_jong: str, without_jong: str) -> str:

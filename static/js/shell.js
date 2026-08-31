@@ -43,6 +43,8 @@ const routes = [
   { re: /^\/image$/,  nav: "img", layer: "base", load: () => import("./image.js") },
   { re: /^\/video$/,  nav: "vid", layer: "base", load: () => import("./video.js") },
   { re: /^\/deck$/,   nav: "dck", layer: "base", load: () => import("./deck.js") },
+  /* 발음 사전 — 입력칸이 있으니 바닥이다(패널 금지). 덱에서 버튼으로 온다. */
+  { re: /^\/dict$/,   nav: "",    layer: "base", load: () => import("./dict.js") },
   { re: /^\/mp4$/,    nav: "mp4", layer: "base", load: () => import("./mp4.js") },
   /* 모션 — 렌더링 **다음**이지만 필수는 아니다. 완성 mp4 를 재료로 다시 굽는다. */
   { re: /^\/motion$/, nav: "mtn", layer: "base", load: () => import("./motion.js") },

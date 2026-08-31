@@ -26,6 +26,7 @@ import { videoEditor as ved } from "./videoedit.js";
 import { runSteps } from "./runner.js";
 import { stepBadge, DECK } from "./steps.js";
 import { storyboard } from "./storyboard.js";
+import { panel as dictPanel } from "./dict.js";
 
 /* ★ 손편집의 키는 **원래 번호(src_no)** 다.
  *
@@ -100,6 +101,31 @@ export const meta = {
     const [pBtn, pLab] = mkRun(DECK.speech, "발음 대본 생성",
                                "그 자막을 소리 나는 대로 — 괄호 · 어미 · 숫자 · 퍼센트");
 
+    /* ★ 영문을 소리대로 — **덱 전체.** 「발음 대본 생성」과 갈라 두는 이유가 이
+     * 버튼의 전부다: 그쪽은 자막에서 다시 만들어 손으로 고쳐 둔 발음을 지운다.
+     * 여기는 지금 발음 칸에 있는 글에 영문 변환만 얹으므로 손편집이 살아남는다.
+     * 표는 `voicewright/config/pronunciation_map.yaml` 하나다(`/dict` 화면에서 편집).
+     * ★ 바꾼 뒤 **굽기까지 이어 돈다** — 발음이 바뀌면 음성은 어차피 다시 만들어야 한다. */
+    /* ★ 사전을 여는 자리. 「영문을 소리대로」 **바로 앞**에 둔다 — 순서가 그렇다:
+     * 사전을 채우고, 그다음 덱에 적용한다. 사전이 비어 있으면 적용해 봐야
+     * `DECODE` 가 「디이씨오디이」로 나간다(2026-08-23 실측). */
+    const dictBtn = el("a", "btn sm");
+    dictBtn.href = "#/dict";
+    dictBtn.target = "_blank";
+    dictBtn.rel = "noopener";
+    dictBtn.append(icon("book", 13), el("span", null, "발음 사전"));
+    dictBtn.title = `영문을 한국어 소리로 읽는 표를 고칩니다
+이 덱에 나오는데 사전에 없는 영문을 함께 보여 줍니다
+넣고 저장한 뒤 «영문을 소리대로» 를 누르세요`;
+
+    const eBtn = el("button", "btn sm");
+    eBtn.type = "button";
+    const eLab = el("span", null, "영문을 소리대로 (전체)");
+    eBtn.append(icon("wand", 13), eLab);
+    eBtn.title = `FROM → 프롬 · GROUP BY → 그룹 바이 · NULL → 널
+손으로 고쳐 둔 발음은 그대로 둡니다 — 영문만 바꿉니다
+바꾼 뒤 음성·자막·완성본까지 이어서 굽습니다`;
+
     const [bBtn, bLab] = mkRun(DECK.bake, "음성/자막 굽기", "음성 합성 · 자막 · 조립 · 파일 빌드");
     bBtn.classList.add("primary");
 
@@ -153,6 +179,7 @@ export const meta = {
     sBtn.onclick = () => runChain(SCRIPT, sBtn, sLab, [bgm, pBtn, bBtn],
                                   "자막 대본 생성", "자막이 나왔습니다");
     pBtn.onclick = () => pronounceAll(pBtn, pLab, [bgm, sBtn, bBtn]);
+    eBtn.onclick = () => romanAll(eBtn, eLab, [bgm, sBtn, pBtn, bBtn], bBtn, bLab);
     bBtn.onclick = () => runChain(BAKE, bBtn, bLab, [bgm, sBtn, pBtn, rBtn],
                                   "음성/자막 굽기", "완성본이 나왔습니다");
     rBtn.onclick = () => runChain(RESUB, rBtn, rLab, [bgm, sBtn, pBtn, bBtn],
@@ -166,7 +193,7 @@ export const meta = {
     mark();
     window.addEventListener("focus", mark);
 
-    return [view, print, bgm, sBtn, pBtn, chip, bBtn, rBtn, dBtn, next];
+    return [view, print, bgm, sBtn, pBtn, dictBtn, eBtn, chip, bBtn, rBtn, dBtn, next];
   },
 };
 
@@ -350,6 +377,50 @@ async function pronounceReport(btn, label) {
   } finally {
     label.textContent = was;
     btn.disabled = false;
+  }
+}
+
+/* 덱 전체의 영문을 소리대로 바꾸고, 이어서 굽는다.
+
+   ★ 먼저 **몇 장이 바뀌는지 보여 주고 묻는다.** 발음을 통째로 건드리는 일이라,
+     누른 사람이 규모를 모르고 시작하면 안 된다(`pronounceAll` 과 같은 이유). */
+async function romanAll(btn, label, group, bakeBtn, bakeLab) {
+  const lock = (v) => { btn.disabled = v; group.forEach((g) => { g.disabled = v; }); };
+  const was = label.textContent;
+  lock(true);
+  try {
+    const p = await api(`/api/projects/${state.projectId}/speak-roman-all`,
+                        {method: "POST"});
+    if (!p.changed) { toast("바꿀 영문이 없습니다 — 이미 전부 소리대로입니다"); return; }
+    /* ★ 줄바꿈은 **역따옴표 안의 실제 줄바꿈**으로 쓴다. 큰따옴표 안에 역슬래시 n 을
+       쓰면, 이 파일을 스크립트로 고칠 때 그것이 실제 줄바꿈으로 풀려 문자열이 두 줄로
+       갈라지고 덱 화면이 통째로 「Invalid or unexpected token」이 된다 — 2026-08-17 과
+       08-23, 같은 자리에서 두 번 겪었다. 역따옴표 안에서는 줄바꿈이 그대로 유효하다. */
+    const eg = (p.sample || []).map((s) => `  ${s.no}장  ${s.text}…`).join(`
+`);
+    const msg = `${p.n}장 가운데 ${p.changed}장의 영문이 소리로 바뀝니다.
+
+${eg}
+
+손으로 고쳐 둔 발음은 그대로 둡니다. 자막도 안 바뀝니다.
+바꾼 뒤 음성·자막·완성본까지 이어서 굽습니다. 계속할까요?`;
+    if (!confirm(msg)) return;
+    label.textContent = "바꾸는 중…";
+    const r = await api(
+      `/api/projects/${state.projectId}/speak-roman-all?apply=true`, {method: "POST"});
+    toast(`${r.changed}장의 영문을 소리대로 바꿨습니다 — 이제 굽습니다`);
+    label.textContent = was;
+    lock(false);
+    // ★ 굽기는 **그 버튼에 맡긴다.** 잡을 돌리는 자리가 둘이 되면 진행 표시와
+    //   잠금이 갈려서, 도는 동안 다른 버튼이 멀쩡히 눌린다(2026-08-13 사고).
+    await runChain(BAKE, bakeBtn, bakeLab, group.concat([btn]), "음성/자막 굽기",
+                   "완성본이 나왔습니다");
+    return;
+  } catch (e) {
+    toast("바꾸지 못했습니다: " + e.message, "err");
+  } finally {
+    label.textContent = was;
+    lock(false);
   }
 }
 
@@ -1024,6 +1095,42 @@ export async function mount(root, ctx) {
       }
     };
     g2.appendChild(nb);
+
+    /* ★ 영문을 소리대로 — 「숫자를 소리대로」와 같은 자리, 같은 방식이다.
+       ★ 왜 필요한가 — 모델은 한글 자모로 학습돼 영문에서 흔들린다. `FROM` 이
+         「에프알오엠」으로도 뭉개진 소리로도 나온다. 2과목 SQL 은 한 덱에 `NULL`
+         176번·`WHERE` 48번이라 손으로는 반드시 몇 개를 놓친다.
+       ★ **자막은 안 건드린다.** 화면에는 `SELECT` 라고 떠야 한다 — 그게 배우는
+         내용이다. 소리만 「셀렉트」가 되면 된다.
+       ★ 표는 `voicewright/config/pronunciation_map.yaml` 하나다. 새 용어는 거기
+         한 줄 넣으면 여기까지 따라온다(voicewright 의 `/dict` 화면에서 편집).
+       ★ 「발음 대본 생성」이 이미 이 변환을 한다. 이 버튼은 **그 뒤에 자막을 고쳤을
+         때** 그 칸만 다시 맞추는 자리다 — 전체를 다시 만들면 손편집이 날아간다. */
+    const rb = el("button", "btn sm");
+    rb.type = "button";
+    rb.append(icon("wand", 12), el("span", null, "영문을 소리대로"));
+    rb.title = `FROM → 프롬 · GROUP BY → 그룹 바이 · NULL → 널
+표에 없는 영문은 글자 이름으로 읽습니다(ABC → 에이비씨)
+자막은 건드리지 않습니다 — 화면에는 영문 그대로 남습니다`;
+    rb.onclick = async () => {
+      const before = pron.value;
+      if (!/[A-Za-z]{2}/.test(before)) { toast("바꿀 영문이 없습니다"); return; }
+      rb.disabled = true;
+      try {
+        const r = await api("/api/speak-roman",
+                            {method: "POST", body: {text: before}});
+        if (r.text === before) { toast("바꿀 영문이 없습니다"); return; }
+        pron.value = r.text;
+        edit(okey(s), ["narration", "text"], pron.value);   // 저장은 같은 길로
+        toast("영문을 소리대로 바꿨습니다 — 읽어 보고 «다시 합성»");
+      } catch (e) {
+        toast("바꾸지 못했습니다: " + e.message, "err");
+      } finally {
+        rb.disabled = false;
+      }
+    };
+    g2.appendChild(rb);
+
     grid.appendChild(g2);
     wrap.appendChild(grid);
 
@@ -1146,6 +1253,7 @@ export async function mount(root, ctx) {
       };
       ab.appendChild(rv);
     }
+
     bar.appendChild(ab);
 
     const mb = el("div", "fb");
@@ -1204,6 +1312,12 @@ export async function mount(root, ctx) {
     }
     bar.appendChild(mb);
     wrap.appendChild(bar);
+
+    /* ★ 발음 사전 — **음성 줄과 제목 칸 사이.** 사전을 채우려면 바로 위
+       자막·발음 칸에서 낱말을 복사해야 하는데, 새 창이나 다른 화면으로 가면
+       그 글을 놓친다(2026-08-23 지적). 붙여 넣을 자리가 복사할 자리 바로
+       아래에 있어야 한다. 접어 두므로 안 쓸 때는 한 줄만 차지한다. */
+    wrap.appendChild(dictPanel(state.projectId));
 
     /* ── 스토리보드 정리 — 말하는 차례와 글자 뜨는 차례를 맞춘다 ─────────
        ★ 스틸은 위 슬라이드 자리에, 순서 표는 음성 바로 아래에 붙는다.

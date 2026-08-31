@@ -414,6 +414,129 @@ def youtube_thumb_pick(pid: int, name: str) -> Dict[str, Any]:
             "url": f"/api/projects/{pid}/file/{ws.STEPS['dist'][0]}/썸네일.png"}
 
 
+class PronDictIn(BaseModel):
+    """사전 통째로 받는다 — 화면이 표를 들고 있고 저장은 한 번에 한다."""
+    rules: Dict[str, str]
+
+
+@app.get("/api/pron-dict")
+def pron_dict_get(pid: int | None = None) -> Dict[str, Any]:
+    """발음 사전 + **이 덱에서 아직 사전에 없는 영문**.
+
+    ★ 사전만 보여 주면 무엇을 채워야 하는지 모른다. SQL 덱처럼 용어가 쏟아지는
+      과목에서는 그것이 일의 전부다 — 그래서 덱을 훑어 **빠진 것만 빈도순으로**
+      같이 낸다. 채울 자리가 화면에 보여야 채운다.
+    """
+    from core import roman
+
+    path = roman.dict_path()
+    rules = dict(roman.rules())
+    missing: List[Dict[str, Any]] = []
+    if pid is not None:
+        import collections
+
+        doc = _find(pid)
+        now = narration_of(pid, doc["slug"]) or {}
+        cnt: "collections.Counter[str]" = collections.Counter()
+        for cur in now.values():
+            for field in ("text", "srt_text"):
+                cnt.update(roman.find_roman(cur.get(field) or ""))
+        for word, n in cnt.most_common():
+            if word not in rules:
+                missing.append({"word": word, "n": n, "guess": roman.spell(word)})
+    return {"path": str(path or ""), "count": len(rules), "rules": rules,
+            "missing": missing[:200]}
+
+
+@app.post("/api/pron-dict")
+def pron_dict_post(body: PronDictIn) -> Dict[str, Any]:
+    """사전을 통째로 다시 쓴다 — voicewright 의 `/dict` 화면과 **같은 형식**으로.
+
+    ★ 머리말 주석은 그대로 두고 `rules:` 블록만 갈아 끼운다. 키 정렬도 그쪽과
+      같게 한다 — 두 화면이 같은 파일을 번갈아 쓰는데 형식이 갈리면 매번 통째로
+      바뀐 것처럼 보인다.
+    ★ 저장 전에 **백업 한 벌**을 남긴다. 사람이 쌓아 온 표이고, 실수로 비우면
+      되돌릴 길이 없다.
+    """
+    from core import roman
+
+    path = roman.dict_path()
+    if path is None:
+        raise HTTPException(status_code=404, detail="사전 파일을 찾지 못했습니다")
+
+    rules = {k.strip(): v.strip() for k, v in (body.rules or {}).items()
+             if k.strip() and v.strip()}
+    if not rules:
+        raise HTTPException(status_code=400, detail="사전이 비었습니다 — 저장하지 않습니다")
+
+    raw = path.read_text(encoding="utf-8")
+    head = raw.split("rules:", 1)[0].rstrip("\n") + "\n\n" if "rules:" in raw else ""
+    path.with_suffix(".yaml.bak").write_text(raw, encoding="utf-8")
+
+    def q(s: str) -> str:
+        return f'"{s}"' if (":" in s or s != s.strip()
+                            or s.startswith(("'", '"', "*", "&", "#"))) else s
+
+    body_txt = "".join(f"  {q(k)}: {q(rules[k])}\n" for k in sorted(rules))
+    ws.write_text(path, head + "rules:\n" + body_txt)
+    roman.forget()
+    return {"ok": True, "count": len(rules), "file": str(path)}
+
+
+@app.post("/api/projects/{pid}/speak-roman-all")
+def speak_roman_all(pid: int, apply: bool = False) -> Dict[str, Any]:
+    """**덱 전체**의 발음 칸에서 영문만 한국어 소리로 바꾼다.
+
+    ★ `pronounce-all`(발음 대본 생성)과 갈라 둔 이유가 이 함수의 전부다. 그쪽은
+      **자막에서 다시 만들어서** 손으로 고쳐 둔 발음을 지운다. 여기는 **지금 발음
+      칸에 있는 글에** 영문 변환만 얹는다 — 「새느 수」처럼 귀로 골라 고쳐 둔 것이
+      살아남는다. 이미 손댄 덱에서 영문만 고치려면 그것 말고는 장마다 버튼을
+      누르는 수밖에 없고, 112장이면 말이 안 된다.
+
+    ★ 오버라이드에 쓴다(대본 캐시가 아니다). 스테이지를 다시 돌려도 남는다.
+
+    ★ Claude 를 부르지 않는다. 결정론이라 공짜이고, 몇 번 눌러도 같은 결과다
+      (이미 바뀐 장에는 영문이 없어 그대로다).
+    """
+    from core.roman import speak_roman
+
+    doc = _find(pid)
+    slug = doc["slug"]
+    now = narration_of(pid, slug)
+    if not now:
+        raise HTTPException(status_code=400, detail="대본을 먼저 만드세요")
+
+    cps = float((doc.get("narration") or config.load()["narration"])
+                .get("chars_per_sec", 5.7))
+    plan: Dict[str, str] = {}
+    for key, cur in now.items():
+        said = (cur.get("text") or cur.get("srt_text") or "").strip()
+        if not said:
+            continue
+        new = speak_roman(said)
+        if new != said:
+            plan[key] = new
+
+    if not apply:
+        return {"ok": True, "n": len(now), "changed": len(plan),
+                "sample": [{"no": int(k), "text": v[:70]}
+                           for k, v in list(plan.items())[:3]]}
+
+    ov = ws.load_overrides(pid, slug)
+    slides = ov.setdefault("slides", {})
+    for key, new in plan.items():
+        nar = slides.setdefault(key, {}).setdefault("narration", {})
+        nar["text"] = new
+    ws.save_overrides(pid, slug, ov)
+
+    # ★ 음성·자막을 낡게 만든다 — 안 올리면 "할 일 없음" 이라 옛 음성이 남는다
+    doc["narration_rev"] = int(doc.get("narration_rev") or 0) + 1
+    doc["overrides_rev"] = int(doc.get("overrides_rev") or 0) + 1
+    ws.save_project(pid, slug, doc)
+    return {"ok": True, "n": len(now), "changed": len(plan),
+            "narration_rev": doc["narration_rev"]}
+
+
 @app.post("/api/projects/{pid}/pronounce-report")
 def pronounce_report(pid: int) -> Dict[str, Any]:
     """**손으로 정한 읽는 법**을 표로 내고 그 폴더를 연다.
@@ -1667,6 +1790,20 @@ def speak_numbers_api(body: SpeakIn) -> Dict[str, str]:
     """
     from core import honorific
     return {"text": honorific.speak_numbers(body.text or "")}
+
+
+@app.post("/api/speak-roman")
+def speak_roman_api(body: SpeakIn) -> Dict[str, str]:
+    """발음 칸의 **영문만** 한국어 소리로 바꿔 돌려준다. 저장은 하지 않는다.
+
+    ★ 「숫자를 소리대로」와 같은 자리·같은 방식이다. 자막에서 다시 만들지 않는 것이
+      핵심이다 — 발음 칸에는 손으로 고친 것이 이미 얹혀 있어서, 다시 만들면 날아간다.
+    ★ 표는 `voicewright/config/pronunciation_map.yaml` 하나뿐이다. 그 파일에 한 줄
+      넣으면 여기까지 따라오고, voicewright 의 `/dict` 화면에서 편집할 수 있다.
+    """
+    from core.roman import speak_roman
+
+    return {"text": speak_roman(body.text or "")}
 
 
 @app.post("/api/pronounce")

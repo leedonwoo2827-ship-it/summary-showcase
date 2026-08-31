@@ -55,7 +55,8 @@ def _line(t: Any, n: int) -> str:
 
 
 def prompts(deck: Dict[str, Any], *, title: str, cfg: Dict[str, Any],
-            led: Optional[Dict] = None, book: str = "") -> List[Dict[str, Any]]:
+            led: Optional[Dict] = None, book: str = "",
+            full: bool = False) -> List[Dict[str, Any]]:
     """썸네일 지시문 두 벌. 슬라이드 지시문과 같은 행 모양으로 낸다."""
     led = led or {}
     img = cfg["image"]
@@ -74,15 +75,29 @@ def prompts(deck: Dict[str, Any], *, title: str, cfg: Dict[str, Any],
             "어두운 배경·검정 판·야간 장면·비네팅·발광 금지",
             f"장면: {STYLE}. 사물 배치만으로 뜻을 전한다 — "
             f"이 영상이 다루는 것은 {_line(scene, 180)}",
-            "구도: 가로 16:9. 장면이 주인공이고 글자는 얹는 것이다. "
-            "미니어처 오브젝트를 가운데와 아래에 풍성하게 두고, "
-            "약간 위에서 내려다보는 3/4 각도. 글자가 앉을 위쪽 한쪽 구석을 비운다",
+            # ★ **전면 판은 그림에 글자를 안 넣는다**(2026-08-29 지시: "썸네일
+            #   2파일 다 텍스트는 빼도 된다"). 제목은 화면 위 띠에 코드가 62px
+            #   고정으로 그리므로, 그림은 **위 10% 를 비워 주기만** 하면 된다.
+            #   글자를 그림에 박으면 크기가 장마다 흔들리고, 나중에 사람이 문구를
+            #   고칠 수도 없다.
+            ("구도: 가로 16:9(1920×1080). 장면이 주인공이다. 미니어처 오브젝트를 "
+             "가운데와 아래에 풍성하게 두고, 약간 위에서 내려다보는 3/4 각도. "
+             f"**맨 위 10%(y=0~108)는 아이보리({bg}) 단색으로 비운다** — 발표 "
+             "화면의 제목이 그 띠 위에 얹힌다. 나머지 y=108~1080 은 네 "
+             "가장자리까지 장면으로 채운다"
+             if full else
+             "구도: 가로 16:9. 장면이 주인공이고 글자는 얹는 것이다. "
+             "미니어처 오브젝트를 가운데와 아래에 풍성하게 두고, "
+             "약간 위에서 내려다보는 3/4 각도. 글자가 앉을 위쪽 한쪽 구석을 비운다"),
             f"색: 진한 파랑({img['accent_a']})과 밝은 파랑({img['accent_b']})을 "
             "사물에, 글자는 차콜(#2B2B2B). 바탕은 위에 적은 아이보리",
             f"무드: {mood}",
-            f'글자(한 줄만, 굵은 산세리프, 크지 않게, 위쪽 한쪽 구석): "{_line(word, 24)}"',
-            "넣지 마라: 보조문구·말풍선·숫자 설명·로고·실존 인물·사람 얼굴. "
-            "글자가 화면을 지배하거나 한가운데를 가리면 안 된다",
+            ("글자: **그림 안에 글자를 하나도 넣지 마라.** 제목·설명·숫자 어느 "
+             "것도 인쇄하지 않는다 — 발표 화면의 제목이 위 띠에 따로 얹힌다"
+             if full else
+             f'글자(한 줄만, 굵은 산세리프, 크지 않게, 위쪽 한쪽 구석): "{_line(word, 24)}"'),
+            "넣지 마라: 보조문구·말풍선·숫자 설명·로고·실존 인물·사람 얼굴"
+            + ("" if full else ". 글자가 화면을 지배하거나 한가운데를 가리면 안 된다"),
         ]
         rows.append({
             "n": i,
@@ -100,16 +115,23 @@ def prompts(deck: Dict[str, Any], *, title: str, cfg: Dict[str, Any],
 
 
 def bundle(deck: Dict[str, Any], *, title: str, cfg: Dict[str, Any],
-           led: Optional[Dict] = None, book: str = "") -> Dict[str, Any]:
+           led: Optional[Dict] = None, book: str = "",
+           full: bool = False) -> Dict[str, Any]:
     """스튜디오가 먹는 봉투. 슬라이드 쪽과 **같은 아홉 칸**이되 규격이 다르다."""
-    rows = prompts(deck, title=title, cfg=cfg, led=led, book=book)
+    rows = prompts(deck, title=title, cfg=cfg, led=led, book=book, full=full)
     return {
         "deck": f"{book} {title}".strip() + " (썸네일)",
         # ★ 여기에는 **문체만.** 장마다 다른 글을 넣으면 스튜디오가 전 항목에
         #   덧붙인다(슬라이드 쪽에서 27장이 같은 헤드라인을 이고 나온 적이 있다).
         "style_hint": STYLE,
-        "aspect": "landscape",
-        "target_box": "16:9 (1536×864) youtube thumbnail",
+        # ★ 규격도 판마다 다르다. 전면 판은 그리는 쪽이 **16:9 를 그대로 내준다**
+        #   (2026-08-29). 예전에는 3:2 밖에 못 내서 잘라 써야 했다.
+        "aspect": "16:9" if full else "landscape",
+        "target_box": ("16:9 (1920×1080) — 맨 위 10%(y=0~108)는 아이보리 단색으로 "
+                       "비우고(발표 화면의 제목이 얹힌다), y=108~1080 을 장면으로 "
+                       "채운다. 그림 안에 글자를 넣지 않는다"
+                       if full else
+                       "16:9 (1536×864) youtube thumbnail"),
         "count": len(rows),
         "deck_slides": len([s for s in (deck.get("slides") or []) if not s.get("drop")]),
         "photos_found": 0,

@@ -44,7 +44,7 @@ from typing import Any, Dict, List
 
 from core import config, ledger as lg, workspace as ws
 from pipeline.registry import STAGES, cached_data, write_cache
-from pipeline.s3a_imgprompt import WANT_MEDIA, slide_id
+from pipeline.s3a_imgprompt import WANT_MEDIA, is_full, slide_id
 
 # 맛보기 파일에 담을 장 수. **지금은 안 쓴다** — 맛보기를 내지 않기로 했다
 # (2026-08-17, 아래 내보내기 자리 참고). 되살릴 때 쓰라고 값만 남겨 둔다.
@@ -58,7 +58,7 @@ FILE_NAMING = ("생성한 이미지는 images/ 폴더에 '슬라이드번호'로
 
 
 def bundle(*, deck: str, cfg: Dict[str, Any], rows: List[Dict[str, Any]],
-           deck_slides: int) -> Dict[str, Any]:
+           deck_slides: int, full: bool = False) -> Dict[str, Any]:
     """이미지 스튜디오가 먹는 봉투 하나.
 
     ★ 모양은 받은 표본(`교육방법 및 교육공학_4주차_슬라이드_이미지프롬프트.json`,
@@ -77,10 +77,20 @@ def bundle(*, deck: str, cfg: Dict[str, Any], rows: List[Dict[str, Any]],
             f"진한 파랑({cfg['image']['accent_a']})과 "
             f"밝은 파랑({cfg['image']['accent_b']}) 중심, 슬레이트(#334155) 글자, "
             "플랫 벡터에 은은한 입체감, 균일한 선 굵기, 넉넉한 여백"),
-        # landscape → 1536×1024 (3:2). gpt-image 의 네이티브 크기가 정사각·3:2·2:3
-        # 셋뿐이라 **진짜 16:9 는 없다.** 가장 넓은 것이 이것이고, 16:9 로 잘라 쓴다.
-        "aspect": cfg["image"]["aspect"],
-        "target_box": "wide horizontal panel (3:2), cropped to 16:9 to fill the slide",
+        # ★ **판마다 비율이 다르다**(2026-08-29).
+        #   전면 판 — 그림을 **16:9(1920×1080)로 받는다.** 화면과 비율이 같아
+        #     잘리는 데가 없다. 예전에는 3:2 밖에 못 내는 스튜디오를 쓰느라 아래
+        #     15.6% 를 잘라야 했고, 그 자리를 비워 달라고 두 판(8·9판)을 썼지만
+        #     15장 전부가 넘겼다. 그리는 쪽이 16:9 를 내주면 그 싸움이 없어진다.
+        #   액자 판 — 3:2 그대로다. 옛 프로젝트의 그림이 그 비율로 그려져 있다.
+        "aspect": "16:9" if full else cfg["image"]["aspect"],
+        "target_box": (
+            "16:9 (1920×1080) — 두 칸으로 나뉜 판이다. 1칸 제목칸 y=0~108 은 "
+            "아이보리 단색으로 비우고(발표 화면의 제목이 얹힌다), 2칸 그림칸 "
+            "y=108~1080 에 장면과 글자를 네 가장자리까지 채운다. 발표 화면과 "
+            "비율이 같아 **한 픽셀도 잘리지 않는다**"
+            if full else
+            "wide horizontal panel (3:2), cropped to 16:9 to fill the slide"),
         "count": len(rows),
         "deck_slides": deck_slides,
         "photos_found": 0,
@@ -92,6 +102,7 @@ def bundle(*, deck: str, cfg: Dict[str, Any], rows: List[Dict[str, Any]],
 def run(job, pid: int, slug: str, project: Dict[str, Any], *, force: bool = False):
     stage = STAGES["s3b-images"]
     cfg = config.load()
+    full = is_full(project)      # 전면 판인가 — 봉투의 `target_box` 가 갈린다
 
     outline = cached_data(pid, slug, "s2b-outline") or {}
     slides = outline.get("slides") or []
@@ -169,7 +180,8 @@ def run(job, pid: int, slug: str, project: Dict[str, Any], *, force: bool = Fals
     bak = d / ws.BAK
     if rows:
         p_all = ws.write_json(d / "이미지프롬프트.json",
-                              bundle(deck=deck, cfg=cfg, rows=rows, deck_slides=total))
+                              bundle(deck=deck, cfg=cfg, rows=rows,
+                                     deck_slides=total, full=full))
         # 예전 이름 — 이미 이 파일명을 아는 이미지 앱이 있다. 같은 행을 그대로 쓴다.
         ws.write_json(bak / "slides.json", {
             "schema": "codex-studio-slides@1", "project": deck,
@@ -204,7 +216,7 @@ def run(job, pid: int, slug: str, project: Dict[str, Any], *, force: bool = Fals
                                   for did, _ in pairs if did not in thumb_ids]}
             p_th = ws.write_json(d / "썸네일프롬프트.json",
                                  thumbnail.bundle(th_deck, title=deck, cfg=cfg,
-                                                  led=by_id,
+                                                  led=by_id, full=full,
                                                   book=str(project.get("book") or "")))
             job.add_log(f"썸네일 지시문 2벌(후킹형·차분형) → {p_th}")
         except Exception as e:                      # noqa: BLE001
@@ -220,7 +232,7 @@ def run(job, pid: int, slug: str, project: Dict[str, Any], *, force: bool = Fals
     #     쓴다. 진짜 부분집합일 때만 낸다(2026-08-14: "부족분이 뭐에요?").
     gap_file = d / "이미지프롬프트_부족분.json"
     if gap and len(gap) < len(rows):
-        p_gap = ws.write_json(gap_file, bundle(deck=deck + " (부족분)", cfg=cfg,
+        p_gap = ws.write_json(gap_file, bundle(deck=deck + " (부족분)", cfg=cfg, full=full,
                                                rows=gap, deck_slides=total))
         job.add_log(f"부족분 {len(gap)}개 (새 장 {len(fresh)}개 · 몸통이 바뀐 장 "
                     f"{len(plan['dirty'])}개) → {p_gap}")

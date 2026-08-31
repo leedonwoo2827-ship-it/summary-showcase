@@ -1227,7 +1227,9 @@ def preview(pid: int, n: int | None = None):
     #   시작 문을 그리지 않는다 — 거기서는 소리를 낼 일이 없고 문이 면을 가린다.
     # 배경음악은 굽기 전에도 들려야 고를 수 있다. 한 장만 보는 자리(`?n=`)는 제외 —
     # render_deck 이 one=True 면 알아서 뺀다.
-    res = PreviewResolver(pid)
+    # 폴더를 같이 넘긴다 — 그림 주소에 수정시각을 붙여 캐시가 옛 그림을
+    # 물고 있지 않게 한다(`PreviewResolver.asset` 주석 참고).
+    res = PreviewResolver(pid, ws.project_dir(pid, doc["slug"], create=False))
     cfg = doc.get("bgm") or {}
     rel = str(cfg.get("file") or "")
     bgm = res.asset(rel) if rel and (
@@ -1647,6 +1649,8 @@ def post_budget(pid: int, body: BudgetIn) -> Dict[str, Any]:
 
 class SwapIn(BaseModel):
     image_swap: bool
+    # 그림을 화면에 어떻게 앉힐까 — "frame"(액자) · "full"(전면)
+    image_fit: str = ""
 
 
 @app.post("/api/projects/{pid}/image-swap")
@@ -1659,13 +1663,23 @@ def post_image_swap(pid: int, body: SwapIn) -> Dict[str, Any]:
 
     ★ 조립(S8)만 다시 돌리면 된다 — 결정론이라 돈이 안 든다. Claude 단계는
       아무것도 낡지 않는다. 그래서 켜고 끄며 둘을 견줘 볼 수 있다.
+
+    ★ `image_fit` 은 **한 번 정하면 안 바꾸는 값**이다(2026-08-29). 그림이
+      「액자」로 만들어졌는지 「전면」으로 만들어졌는지에 따라 그림 안의 여백이
+      다르다 — 액자 그림을 전면으로 앉히면 그림에 인쇄된 제목이 화면 제목과
+      겹치고, 전면 그림을 액자에 넣으면 위아래가 허전해진다. 그래서 **안 보내면
+      건드리지 않는다** — 지난 프로젝트를 다시 열어도 값이 그대로 남는다.
     """
     doc = _find(pid)
     doc["image_swap"] = bool(body.image_swap)
+    fit = (body.image_fit or "").strip()
+    if fit in ("frame", "full"):
+        doc["image_fit"] = fit
     # 조립이 이 값을 읽는다 — 바꿨으면 덱이 낡은 것으로 잡혀야 한다
     doc["overrides_rev"] = int(doc.get("overrides_rev") or 0) + 1
     ws.save_project(pid, doc["slug"], doc)
-    return {"ok": True, "image_swap": doc["image_swap"]}
+    return {"ok": True, "image_swap": doc["image_swap"],
+            "image_fit": doc.get("image_fit") or "frame"}
 
 
 class VersionIn(BaseModel):

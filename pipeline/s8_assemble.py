@@ -236,6 +236,12 @@ def compose(pid: int, slug: str, project: Dict[str, Any]) -> tuple[Dict[str, Any
             "subtitle": outline.get("deck_subtitle") or "",
             "live_url": project.get("live_url") or "",
             "language": project.get("language") or "ko",
+            # ★ **그림을 화면에 어떻게 앉힐까**(액자·전면). 렌더러가 이 값으로
+            #   `.s-swapfull` 을 붙인다(`render/slides.py`). 이 칸은 **손으로 고른
+            #   몇 개만** 담는 자리라, 여기 안 적으면 프로젝트에 값이 있어도 화면까지
+            #   못 간다 — 실제로 전면으로 만든 덱이 액자로 떴다(2026-08-29).
+            #   값이 없으면 액자다: 옛 프로젝트가 그대로 나와야 한다.
+            "image_fit": project.get("image_fit") or "frame",
             "repo": {"name_with_owner": repo.get("name_with_owner") or "",
                      "head_sha": (repo.get("head_sha") or "")[:8],
                      "commit_count": repo.get("commit_count") or 0},

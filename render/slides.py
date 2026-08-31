@@ -195,12 +195,26 @@ def _slide(s: Dict[str, Any], lane_i: int, total: int, res) -> str:
     #   (2026-08-14: "이걸 원하는 게 아니라니까"). 제목만 그 위에 얹힌다.
     if "m-swap" in media:
         cls += " s-swap"
+        # ★ **전면 갈래**(2026-08-29). 액자를 걷고 화면을 네 귀퉁이까지 그림이
+        #   덮는다. 옛 프로젝트는 이 클래스가 안 붙어 `.s-swap` 그대로 — 지난
+        #   영상을 다시 구워도 화면이 안 바뀐다(그게 갈래를 나눈 이유다).
+        #   ★ 값은 **문 앞에서 한 번** 정해진다(`static/js/start.js` 의 세 갈래).
+        #     그림이 그 갈래에 맞춰 그려지므로 나중에 바꾸면 여백이 안 맞는다.
+        if ((s.get("_project") or {}).get("image_fit") or "frame") == "full":
+            cls += " s-swapfull"
     # ★ 썸네일 장(표지·마무리)은 **s-swap 과 다르다.** 그쪽은 3:2 액자에 넣고
     #   둘레에 바탕을 까는 방식이라, 물려 쓰면 그 여백이 그대로 따라온다.
     #   여기는 액자가 없다 — 화면 네 귀퉁이까지 그림이 덮고 제목도 안 띄운다
     #   (2026-08-17: "위에 텍스트 안 보이게 전체 화면에 강제로 늘려서 꽉 차게").
     if "m-pic" in media:
         cls += " s-pic"
+        # ★ **전면 판의 표지·마무리는 제목을 띄운다**(2026-08-29 지시: "썸네일
+        #   2파일 다 텍스트는 빼도 된다"). 그림에 글자를 안 박게 되었으니 화면이
+        #   대신 그려야 한다 — 안 그러면 표지가 글자 없는 그림 한 장이 된다.
+        #   캡처 그림 장(`text_image`)과 옛 프로젝트는 그대로 글자 없이 둔다.
+        if (s.get("media_kind") == "thumb"
+                and ((s.get("_project") or {}).get("image_fit") or "frame") == "full"):
+            cls += " s-picfull"
 
     return (
         f'<section class="{cls}" data-no="{no}" data-src="{s.get("src_no") or no}"'
@@ -570,6 +584,88 @@ p{margin:0 0 11px;font-size:clamp(14px,1.15vw,17px);color:#4a453f;max-width:62ch
 .s-shots .m-shots.m-swap>img{display:block;width:100%;height:100%;
   object-fit:contain;max-width:none;position:static;box-shadow:none}
 
+/* ══ 전면 갈래(.s-swapfull) — 액자를 걷고 화면을 통째로 준다 ═══════════════
+   2026-08-29 지시: "우측편에는 공간이 있는데 꽉차게 들어가는게 목표".
+   위 `.s-swap` 은 3:2 액자에 앉히느라 오른쪽 456px 을 비워 뒀다(아바타 자리로
+   남긴 것인데 `#av` 는 232px 만 쓰고 아직 비어 있다). 여기서는 가로를 꽉 채운다.
+
+   ★ **옛 갈래를 한 줄도 안 고친다.** 그림은 만들어질 때의 갈래에 맞춰 여백이
+     잡혀 있어서, 액자용으로 그린 그림을 전면으로 앉히면 그림에 인쇄된 제목이
+     화면 제목과 겹친다. 지난 영상을 다시 구울 때 화면이 달라지면 안 된다.
+
+   ★ 셈. 그림을 **16:9(1920×1080)로 받는다**(2026-08-29부터). 화면과 비율이 같아
+     `cover` 를 걸어도 **한 픽셀도 안 잘린다** — 배율 1.0 으로 딱 맞는다.
+   ★ `object-fit:cover` 를 그대로 둔다. 비율이 같으면 아무 일도 안 하고, 옛 3:2
+     그림이 섞여 들어오면(판을 바꾸기 전에 그린 장) 위를 맞춰 아래를 잘라 준다 —
+     `contain` 이면 그런 장에 좌우로 흰 자리가 생겨 더 나쁘다.
+
+   ★ **제목은 그림 위에 얹힌다** — 그림을 내리지 않는다(2026-08-29).
+     한 번 62px 내려 봤는데, 지시문이 이미 그림 **위 5% 를 비우게** 시키므로
+     빈 자리가 두 겹이 됐다("그림에 제목자리를 비워놓고 그린거 아닌가요?!").
+     제목 띠 62px 은 그림 높이의 **4.84%** 라, 그림이 비워 둔 5% 안에 그대로
+     들어앉는다. 내리면 아래로 5%p 를 더 잘라 내는 손해까지 겹친다
+     (20.5% vs 15.6% — 002.png 은 그 차이로 라벨이 살고 죽었다).
+   ★ 되돌리려면 아래 `top:0` 을 `top:62px` 로만 바꾸면 된다.
+
+   ★ **`.wrap` 과 `.cols` 를 같이 풀어야 한다.** 예전에 `.m-swap` 만 absolute 로
+     띄웠더니 장이 화면 아래로 밀리고(y=1080) 그림 높이가 40px 로 잡혔다
+     (2026-08-14 실측). 감싸는 두 상자가 grid 인 채로 남아 있어서였다. */
+.s.s-swapfull{padding:0;background:#F6F1E8}
+/* ★ **판을 16:9 로 못박고 남는 자리는 바탕으로 둔다**(2026-08-29).
+     `.s` 는 창을 그대로 채우는데, 창이 16:9 보다 납작하면 `cover` 가 그만큼 더
+     잘라 낸다 — 발표용 창(1911×912)에서 재 보니 그림의 **71.6%** 만 보였다
+     (1920×1080 에서는 84.4%). 지시문은 84.4% 를 전제로 「아래 25% 를 비워라」고
+     시키므로, 창 모양에 따라 잘리는 양이 달라지면 그 약속이 깨진다.
+   ★ 그래서 `.wrap` 을 **가운데 놓인 16:9 무대**로 만든다. 창이 어떻든 잘리는 양이
+     늘 15.6% 다. 1920×1080 에서는 `min()` 이 양쪽 다 꽉 차 지금과 똑같다 —
+     **영상은 한 픽셀도 안 바뀐다.**
+   ★ 안쪽 치수를 `cqh`·`cqw`(무대 기준)로 적는다. `vh`·px 로 두면 무대는 줄었는데
+     제목만 그대로라 그림이 비워 둔 5% 띠를 넘는다. 앞 줄의 px 은 이 단위를
+     모르는 브라우저용 받침이다. */
+.s.s-swapfull>.wrap{position:absolute;top:50%;left:50%;
+  transform:translate(-50%,-50%);
+  width:min(100%,calc(100vh * 16 / 9));height:min(100%,calc(100vw * 9 / 16));
+  padding:0;margin:0;max-width:none;display:block;place-items:stretch;
+  overflow:hidden;container-type:size}
+.s.s-swapfull .cols{display:block;grid-template-columns:none;gap:0;height:100%}
+.s.s-shots.s-swapfull .m-shots.m-swap{position:absolute;left:0;right:0;
+  top:0;bottom:0;width:auto;height:auto;margin:0;max-width:none;
+  aspect-ratio:auto;border-radius:0;box-shadow:none;background:transparent;
+  overflow:hidden}
+.s.s-shots.s-swapfull .m-shots.m-swap>img{position:absolute;inset:0;
+  width:100%;height:100%;max-width:none;object-fit:cover;
+  object-position:top center;border-radius:0;box-shadow:none}
+/* 제목 — 그림 위 62px 띠. **고정 높이**라 장마다 크기가 안 흔들린다
+   (2026-08-29: "제목사이즈가 들쑥날쑥해서 지금과 같은 형태를 취하는 겁니다").
+   ★ `height` 가 아니라 `min-height` 다. 제목이 두 줄이 되면 `height` 는 넘치는
+     만큼 위아래로 벌어져 **첫 줄이 y=0 위로 나가 잘린다.** min-height 면 0 에서
+     아래로만 자라고, 그 아래는 그림이 비워 둔 자리다. */
+.s.s-swapfull>.wrap>h2{position:absolute;left:0;right:0;top:0;
+  z-index:2;display:flex;align-items:center;margin:0;line-height:1.25;
+  color:#5A5142;
+  min-height:62px;min-height:5.74cqh;          /* 62/1080 */
+  padding:0 34px;padding:0 1.77cqw;            /* 34/1920 */
+  font-size:clamp(18px,1.56vw,30px);font-size:2.78cqh}   /* 30/1080 */
+.s.s-swapfull>.wrap>h2::after{display:none}
+
+/* ══ 전면 판의 표지·마무리(.s-picfull) — 그림 장과 같은 틀 ════════════════
+   그림에 글자를 안 박으므로 제목을 화면이 그린다. 판을 16:9 로 못박는 것도
+   같은 이유다 — 창이 납작하면 `cover` 가 더 잘라 낸다.
+   ★ `.s-pic` 의 `h2{display:none}` 을 이겨야 해서 클래스를 하나 더 겹쳐 쓴다
+     (0,4,1 대 0,3,1). 짧게 쓰면 자릿수가 같아 소스 순서 싸움이 된다. */
+.s.s-pic.s-picfull>.wrap{position:absolute;top:50%;left:50%;
+  transform:translate(-50%,-50%);
+  width:min(100%,calc(100vh * 16 / 9));height:min(100%,calc(100vw * 9 / 16));
+  padding:0;margin:0;max-width:none;display:block;place-items:stretch;
+  overflow:hidden;container-type:size}
+.s.s-pic.s-picfull>.wrap>h2{display:flex;position:absolute;left:0;right:0;top:0;
+  z-index:2;align-items:center;margin:0;line-height:1.25;color:#5A5142;
+  min-height:62px;min-height:5.74cqh;
+  padding:0 34px;padding:0 1.77cqw;
+  font-size:clamp(18px,1.56vw,30px);font-size:2.78cqh}
+.s.s-pic.s-picfull>.wrap>h2::after{display:none}
+.s.s-pic.s-picfull{background:#F6F1E8}
+
 /* 줄 등장 — `display` 가 아니라 `opacity` 다. display 로 감추면 줄이 뜰 때마다
    아래 내용이 밀려 글이 통째로 튄다. 자리는 처음부터 잡아 두고 보이기만 바꾼다.
    ★ `<tr>` 에는 transform 이 안 먹는다(표 행은 이동 대상이 아니다) — 그래서
@@ -619,8 +715,14 @@ p{margin:0 0 11px;font-size:clamp(14px,1.15vw,17px);color:#4a453f;max-width:62ch
    거기서 한 번 더 위로 올린다: **우하단이 아바타(말하는 사람) 자리**가 되기
    때문이다(#av). 그 자리에 버튼이 있으면 나중에 아바타가 버튼을 깔고 앉는다.
    진행바(#bar)는 화면 아래 가로 전체를 3px 로 지나갈 뿐이라 그대로 둔다. */
-#pz{position:fixed;right:18px;top:18px;z-index:8;
-  padding:6px 14px;border:0;border-radius:99px;
+/* ★ **한 줄로 묶는다**(2026-08-29 지시: "텍스트 우상단 자동재생 버튼 앞에
+     이동"). 진행 표시(#hud)를 단추 왼쪽에 붙이는데, 단추 글자가 「자동 재생」·
+     「멈춤」·「이어서」로 바뀌며 **폭이 달라진다.** 그래서 #hud 를 고정 좌표로
+     밀어 넣지 않고 둘을 flex 한 줄에 세운다 — 단추가 넓어지면 글자가 저절로
+     왼쪽으로 밀린다. #pz 가 `hidden` 일 때는 #hud 만 오른쪽 끝에 남는다. */
+#topr{position:fixed;right:18px;top:18px;z-index:8;
+  display:flex;align-items:center;gap:10px}
+#pz{padding:6px 14px;border:0;border-radius:99px;
   background:rgb(31 29 26/.62);color:#fff;backdrop-filter:blur(6px);
   font-family:inherit;font-size:12px;font-weight:700;cursor:pointer}
 #pz:hover{background:rgb(31 29 26/.86)}
@@ -634,8 +736,8 @@ body.one #pz{display:none}
 #bgmb:hover{opacity:1}
 #bgmb.on{background:#9a4d33;opacity:1}
 body.one #bgmb{display:none}
-#hud{position:fixed;right:18px;top:96px;font-size:11px;color:#948e86;
-     font-variant-numeric:tabular-nums;z-index:8;text-align:right}
+#hud{font-size:11px;color:#948e86;white-space:nowrap;
+     font-variant-numeric:tabular-nums;text-align:right}
 /* 아바타 자리 — **비워만 둔다.** 나중에 말하는 사람이 여기 들어온다.
    본문은 1920 중 왼쪽 1536px 을 쓰므로 오른쪽이 이미 비어 있고, 그 아래쪽이다.
    ★ 고정 px 이 아니라 %/비율로 잡는다 — 영상은 1920×1080 으로 찍히는데 편집
@@ -884,6 +986,12 @@ function media(s){return {a:s.querySelector('audio.na'),v:s.querySelector('video
 const SHOT_BOTTOM_GAP=18;
 function fitShot(sec){
   if(!sec||!sec.classList.contains('s-shots'))return;
+  /* ★ 전면 갈래는 건드리지 않는다(2026-08-29). 그림이 화면을 통째로 덮는데
+     아래 maxHeight 계산이 18px 을 더 깎아 바닥에 아이보리 띠가 생긴다.
+     이 장들은 CSS 가 이미 다 잡았다(`.s-swapfull` · `.s-picfull`).
+     ★ 옛 갈래(`.s-pic`)는 일부러 그대로 둔다 — 지난 영상과 한 픽셀도 달라지면
+       안 된다. 거기도 18px 이 깎이지만 그것이 지금까지 나간 화면이다. */
+  if(sec.classList.contains('s-swapfull')||sec.classList.contains('s-picfull'))return;
   const img=sec.querySelector('.m-shots img');
   const fig=sec.querySelector('.m-shots');
   if(!img||!fig)return;
@@ -1201,12 +1309,34 @@ go(i);
 class PreviewResolver:
     """미리보기 — 서버 API 로 미디어를 가리킨다(파일 복사 없음)."""
 
-    def __init__(self, pid: int) -> None:
+    def __init__(self, pid: int, root=None) -> None:
         self.pid = pid
+        # 파일 수정시각을 읽을 프로젝트 폴더. 없어도 동작한다(주소에 판만 안 붙는다).
+        self.root = root
 
     def asset(self, rel: str) -> str:
+        """`/api/…/file/<rel>?v=<수정시각>`.
+
+        ★ **`?v=` 가 이 함수의 존재 이유다**(2026-08-29). 파일 서빙이
+          `Cache-Control: public, max-age=600` 을 걸어 두어서, 같은 이름으로 그림을
+          갈아 끼우면 브라우저가 **십 분 동안 옛 그림을 물고 있다.** 그림 넣는
+          화면은 미리보기 HTML 을 `&t=` 로 새로 부르지만(`static/js/image.js`),
+          그 HTML 안의 **그림 주소**는 그대로라 캐시를 그냥 지나쳤다 — 표지를
+          바꿔 넣었는데 옛 표지가 계속 떴다.
+        ★ 수정시각을 붙이면 **바뀐 파일만** 주소가 달라진다. 안 바뀐 그림은 주소가
+          같아 캐시가 그대로 듣는다 — 캐시를 끄는 것(`no-store`)보다 낫다.
+          파일을 못 읽으면 그냥 판 없이 낸다(경로가 아직 없는 장이 있다).
+        """
+        if not rel:
+            return ""
         from urllib.parse import quote
-        return f"/api/projects/{self.pid}/file/{quote(rel)}" if rel else ""
+        url = f"/api/projects/{self.pid}/file/{quote(rel)}"
+        if self.root is not None:
+            try:
+                url += f"?v={int((self.root / rel).stat().st_mtime)}"
+            except OSError:
+                pass
+        return url
 
     def video(self, s: Dict[str, Any]) -> str:
         v = s.get("video_id")
@@ -1281,12 +1411,13 @@ def render_deck(deck: Dict[str, Any], res, *, title: str = "",
         + (f"<audio id=\"bgm\" loop preload=\"auto\" src=\"{bg}\"></audio>"
            "<button id=\"bgmb\" type=\"button\" title=\"배경음악 켜기/끄기 (M)\">"
            "&#9834;</button>" if bg else "")
-        + "<button id=\"pz\" type=\"button\" hidden></button>"
+        + "<div id=\"topr\"><div id=\"hud\"></div>"
+          "<button id=\"pz\" type=\"button\" hidden></button></div>"
         # 아바타(말하는 사람) 자리 — 지금은 **비어 있다.** 자리만 잡아 두면 나중에
         # 채울 때 이 한 줄에 내용만 넣으면 되고, 그 전까지 다른 것이 그 자리를
         # 차지하지 않는다(그래서 재생 단추들을 우상단으로 올렸다).
         "<div id=\"av\"></div>"
-        "<div id=\"bar\"></div><div id=\"hud\"></div>"
+        "<div id=\"bar\"></div>"
         f"<script>window.__DECK__={data};</script>"
         f"<script>{JS}</script></body></html>"
     )

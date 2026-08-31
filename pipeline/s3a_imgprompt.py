@@ -49,7 +49,27 @@ LEVELS = ("기억", "이해", "적용", "분석", "평가", "창조")
 #          2.4 장은 제일 먼저 말하는 「목표」가 화면 맨 아래라 마지막에 떴다.
 #          만들 때 적어 두면 되찾을 일이 없다(2026-08-17 지시: "20장 할 때
 #          깔끔하게 나오게 수정을 해둬").
-PROMPT_FMT = 6
+#     7  **전면 판** — 그림이 화면 가로를 꽉 채운다(2026-08-29)
+#        ★ 6판까지는 3:2 액자에 앉혀 오른쪽 456px 을 비웠다(아바타 자리로 남긴
+#          것인데 `#av` 는 232px 만 쓰고 아직 비어 있다). 7판은 가로를 다 쓰고
+#          아래 20.5% 를 잘라 낸다 — 그래서 「어디까지 그려라」를 숫자로 못박고,
+#          제목은 그림에서 빼 코드가 62px 고정으로 그린다.
+PROMPT_FMT = 6        # 액자 판 — **옛 프로젝트가 이 판을 그대로 지킨다**
+PROMPT_FMT_FULL = 10  # 전면 판 (10판: 그림이 **16:9 로 온다** — 잘리는 데가 없다)
+
+# ★ 판을 **프로젝트마다** 고른다(`image_fit`). 한 자리에서 올려 버리면 지난
+#   프로젝트의 지시문까지 전부 낡은 것으로 잡혀 다시 쓰인다 — 그 그림들은 액자에
+#   맞춰 그려져 있어서 전면 지시문으로 바꿔 봐야 맞지 않는다(2026-08-29 지시:
+#   "지난 영상 보수때문에").
+
+
+def is_full(project: Dict[str, Any]) -> bool:
+    """이 덱이 **전면 판**인가. 값이 없으면 액자 판이다 — 옛 프로젝트가 그렇다."""
+    return ((project or {}).get("image_fit") or "frame") == "full"
+
+
+def fmt_of(project: Dict[str, Any]) -> int:
+    return PROMPT_FMT_FULL if is_full(project) else PROMPT_FMT
 
 # 그림이 들어갈 수 있는 레인.
 #   html        원고 장 — 몸통을 그림 한 판으로 갈아끼운다
@@ -170,7 +190,7 @@ def _one(t: Any, n: int) -> str:
 
 def compose(*, background: str, layout: str, tone: str, title: str,
             labels: List[Dict[str, Any]], arrange: str,
-            cfg: Dict[str, Any]) -> str:
+            cfg: Dict[str, Any], full: bool = False) -> str:
     """이미지 스튜디오가 그대로 먹는 **한국어 프롬프트.**
 
     ★ 이 그림은 **글자를 넣는 그림**이다. 예전엔 정반대였다 — 영어로 「no text」를
@@ -187,6 +207,7 @@ def compose(*, background: str, layout: str, tone: str, title: str,
       본보기(NotebookLM 슬라이드)를 재어 보니 여섯 갈래가 되풀이됐다(`ARRANGE`).
     """
     img = cfg["image"]
+    bg = img.get("bg", "#F6F1E8")      # 1칸을 칠할 색. 바탕과 같아야 한다
     # ★ **「중심」이라고 쓰지 않는다.** 그 낱말은 "이 색으로 화면을 채우라" 로
     #   읽힌다. 실제로 원하는 것은 *글자와 강조에* 그 파랑을 쓰라는 것이다.
     tone = _one(tone, 220) or (
@@ -207,11 +228,55 @@ def compose(*, background: str, layout: str, tone: str, title: str,
         "칠한다 — 네 귀퉁이와 가장자리까지 같은 밝기다. 어두운 배경·검정 판·"
         "야간 장면·비네팅(가장자리 어둡게)·어두운 그라데이션·발광(글로우) 금지 "
         "— 글자가 묻힌다. 진한 파랑은 글자와 강조에만 쓰고 배경에는 쓰지 않는다",
-        f"배경: {_one(background, 220)}",
-        f"구도: {_one(layout, 260)}",
-        f"색/톤: {tone}",
-        f'제목(한글, 굵게, 화면 맨 위 가운데): "{_one(title, 40)}"',
     ]
+    if full:
+        # 칸마다 한 줄 — 지시문 규약이 그렇다. 한 줄에 몰아넣으면 칸이 깨진다.
+        # ★ **10판에서 칸이 셋에서 둘로 줄었다**(2026-08-29). 그림이 3:2 로 오던
+        #   동안은 16:9 화면에 앉힐 때 아래 15.6% 가 잘려서, 그 자리를 비워 달라고
+        #   「3칸 블리드칸」을 두고 부탁해야 했다. 두 판(8·9판)을 그렇게 썼지만
+        #   **15장 전부가 그 칸을 넘겼다**(중앙값 85.1% · 최악 93.8%). 그림 모델은
+        #   판을 채우려는 성향이 강해서, 문구를 아무리 세게 써도 안 지켜졌다.
+        # ★ 이제 그림이 **16:9 로 온다.** 화면과 비율이 같아 **한 픽셀도 안 잘린다** —
+        #   부탁할 일이 통째로 없어졌다. 남은 것은 제목 자리 하나뿐이다.
+        lines.append(
+            "판 나누기: 이 그림은 위에서 아래로 **두 칸**이 쌓인 판이다. 크기는 "
+            "1920×1080(16:9)이고 두 칸의 높이를 합치면 1080px 다")
+        lines.append(
+            f"  1칸 제목칸  y=0~108 (108px, 높이의 10%): 아이보리({bg}) 단색. "
+            "장면도 글자도 없다. 발표 화면의 제목이 이 칸 위에 얹힌다")
+        lines.append(
+            "  2칸 그림칸  y=108~1080 (972px, 높이의 90%): **장면과 글자는 오직 이 "
+            "칸 안에 있다.** 가로는 0~1920px 끝에서 끝까지, 세로는 맨 아래 "
+            "y=1080 까지 남김없이 채운다 — 아래쪽에 여백을 두지 마라")
+        lines.append(
+            "  ★ 이 판은 화면과 비율이 같아서 **잘려 나가는 데가 없다.** 네 "
+            "가장자리까지 그대로 나간다. 그러니 「잘릴까 봐」 가장자리를 비우거나 "
+            "주제를 한가운데로 몰지 마라 — 화면이 헐거워진다. 비우는 것은 "
+            "**1칸 하나뿐**이다")
+    lines += [
+        f"배경: {_one(background, 220)}",
+        # ★ 꼬리는 **전면 판에만** 붙인다. 양쪽에 붙이면 액자 판 지시문이 옛것과
+        #   달라져 지난 프로젝트가 통째로 다시 쓰인다(2026-08-29 실측으로 잡았다).
+        f"구도: {_one(layout, 260)}"
+        + (" (장면은 2칸 y=108~1080 안에서 짠다)" if full else ""),
+        f"색/톤: {tone}",
+    ]
+    # ★ **전면 판은 제목을 그림에 안 그린다.** 화면 위 제목은 코드가 62px 고정으로
+    #   그린다 — 그림이 그리면 장마다 크기가 들쑥날쑥했다(2026-08-29 지시:
+    #   "제목사이즈가 들쑥날쑥해서 지금과 같은 형태를 취하는 겁니다").
+    #   그림은 그 자리를 비워 주기만 하면 된다.
+    # ★ 이 자리에 `제목: "…"` 꼴을 되살리면 안 된다 — `render/youtube.py` 가 그
+    #   꼴을 찾아 챕터 제목으로 쓴다. 못 찾으면 원고 제목으로 내려간다.
+    if full:
+        # ★ **「비워라」가 아니라 「칠해라」로 적는다**(2026-08-29 지시: "하단 25%도
+        #   아이보리색으로 채우라고 지시를 하는 쪽으로"). 「비워 둔다」는 모델에게
+        #   「그리다 말라」로 읽혀 배경 무늬·바닥선·그림자가 그 띠를 그대로 가로지른다.
+        #   색을 못박으면 **칠해야 할 면**이 되어 결과가 훨씬 덜 흔들린다.
+        lines.append(
+            "제목: 그림 안에 제목·헤드라인을 인쇄하지 마라. 1칸은 발표 화면의 "
+            "제목이 얹힐 빈 자리다")
+    else:
+        lines.append(f'제목(한글, 굵게, 화면 맨 위 가운데): "{_one(title, 40)}"')
     for i, lb in enumerate(labels[:len(spots)]):
         head = _one((lb or {}).get("head"), 20)
         body = _one((lb or {}).get("body"), 80)
@@ -231,18 +296,45 @@ def compose(*, background: str, layout: str, tone: str, title: str,
 
     # ★ **글자 크기를 세 단으로 못박는다.** 안 적으면 모델이 라벨을 제목만큼 키워
     #   화면이 글자로 덮인다. 본보기의 제목:소제목:설명이 대략 1 : 0.6 : 0.4 였다.
-    lines.append("글자 크기: 제목은 그림 높이의 7% 안팎, 라벨 소제목은 제목의 60%, "
-                 "라벨 설명은 소제목의 65%. 세 단이 눈에 띄게 달라야 한다. "
-                 "글자가 화면을 덮으면 안 된다 — 그림이 주인공이고 라벨은 그 둘레에 "
-                 "얹힌다. 포스터 제목처럼 키우지 마라")
+    # ★ 전면 판에는 그림 안에 제목이 없다. 없는 것을 기준으로 적으면 모델이
+    #   기준을 못 찾아 라벨을 제목만 하게 키운다 — 그래서 **그림 높이로** 적는다
+    #   (옛 판의 제목 7% × 0.6 = 4.2%, 그 65% = 2.7%. 결이 같다).
+    if full:
+        lines.append("글자 크기: 라벨 소제목은 그림 높이의 4% 안팎, 그 아래 설명은 "
+                     "소제목의 65%. 두 단이 눈에 띄게 달라야 한다. 글자가 화면을 "
+                     "덮으면 안 된다 — 그림이 주인공이고 라벨은 그 둘레에 얹힌다. "
+                     "포스터 머리글처럼 키우지 마라")
+    else:
+        lines.append("글자 크기: 제목은 그림 높이의 7% 안팎, 라벨 소제목은 제목의 60%, "
+                     "라벨 설명은 소제목의 65%. 세 단이 눈에 띄게 달라야 한다. "
+                     "글자가 화면을 덮으면 안 된다 — 그림이 주인공이고 라벨은 그 둘레에 "
+                     "얹힌다. 포스터 제목처럼 키우지 마라")
     # ★ **액자 안이 곧 그림 전부다.** 화면에서 이 그림은 3:2 액자에 통째로 앉고
     #   한 픽셀도 안 잘린다(`render/slides.py` 의 `.s-swap` — 자르지 않으려고
     #   남는 자리를 바탕으로 처리했다). 그런데 「16:9 로 잘릴 수 있다」고 적어
     #   두면 모델이 가장자리를 비워 두려고 주제를 한가운데로 몰아 화면이 헐거워진다.
     #   이제는 반대로 **가장자리까지 다 쓰라고** 말해 준다.
-    lines.append("산출물 규격: 3:2 가로(1536×1024). 화면의 액자 안에 통째로 들어가며 "
-                 "잘리는 부분이 없다 — 가장자리까지 다 쓰고, 안전 여백을 위해 "
-                 "주제를 한가운데로 몰지 마라. 실존 로고·서비스 화면·실존 인물 금지")
+    if full:
+        # ★ **어디까지 그려야 하는지를 숫자로 못박는다**(2026-08-29 지시: "그림을
+        #   그릴때 그림을 어디까지 그려야 하는가에 대한 지시를 json에게 명확하게
+        #   둬주십시오"). 제목 62px 아래 1920×1018 에 가로를 꽉 채워 앉으므로
+        #   배율이 1.25 가 되고 세로 1280 중 **아래 262px(20.5%)이 잘린다.**
+        # ★ 「가장자리까지 다 쓰라」와 정면으로 부딪히므로 **어느 쪽이 이기는지**를
+        #   적어 준다. 안 적으면 둘을 반씩 지켜 라벨이 잘리는 자리에 앉는다.
+        lines.append("라벨 자리(2칸 안의 좌표): 「위」라고 적은 자리는 y=150~330, "
+                     "「아래」라고 적은 자리는 y=730~1010 이다 — 라벨의 **설명 "
+                     "줄까지** y=1010 안에서 끝나야 한다. 「아래」는 1칸이 아니라 "
+                     "**2칸의 아래쪽**을 뜻한다")
+        # ★ **16:9 로 뽑는다**(10판). 화면과 비율이 같아 잘리는 데가 없다 —
+        #   「안 잘린다」를 분명히 적어야 모델이 가장자리를 비워 두지 않는다.
+        lines.append("산출물 규격: **16:9 가로(1920×1080)**. 발표 화면과 비율이 "
+                     "같아서 이 판이 **한 픽셀도 안 잘리고 그대로** 나간다 — 네 "
+                     "가장자리까지 다 쓰고, 안전 여백을 위해 주제를 한가운데로 "
+                     "몰지 마라. 실존 로고·서비스 화면·실존 인물 금지")
+    else:
+        lines.append("산출물 규격: 3:2 가로(1536×1024). 화면의 액자 안에 통째로 들어가며 "
+                     "잘리는 부분이 없다 — 가장자리까지 다 쓰고, 안전 여백을 위해 "
+                     "주제를 한가운데로 몰지 마라. 실존 로고·서비스 화면·실존 인물 금지")
     return "\n".join(lines)
 
 
@@ -280,7 +372,27 @@ def body_of(s: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 
 def build_brief(project: Dict[str, Any], batch: List[Dict[str, Any]]) -> str:
-    lines = ["# 발표", project.get("title") or "", "", "# 그림을 그릴 장"]
+    lines = ["# 발표", project.get("title") or ""]
+    # ★ **이번 덱이 어느 판인지 여기서 못박는다.** `구도` 칸은 모델이 쓰는 글이라,
+    #   비워 둘 자리를 여기서 알려 주지 않으면 「상단에 제목 자리」 같은 옛 판
+    #   문장을 그대로 쓴다. 코드가 붙이는 꼬리(`compose`)와 어긋나면 그림이 그
+    #   틈에서 흔들린다.
+    if is_full(project):
+        lines += ["", "# 이 덱의 판 — **전면**",
+                  "그림이 16:9(1920×1080)로 와서 화면을 그대로 덮는다. 잘리는 데가 없다.",
+                  # ★ 「비운다」가 아니라 「칠한다」로 적는다 — `compose` 의 위·아래
+                  #   띠 지시와 같은 말이어야 한다. 두 글이 다른 낱말을 쓰면 모델이
+                  #   그 틈에서 흔들린다(2026-08-29).
+                  "- `구도` 칸에 **맨 위 10%(y=0~108)만 아이보리 단색으로 비우고, "
+                  "장면은 y=108~1080 을 네 가장자리까지 채운다**고 반드시 적어라.",
+                  "- **`제목` 은 그림에 인쇄되지 않는다.** 화면 위 제목은 코드가 "
+                  "그린다. 그래도 한 줄 써라 — 다른 자리에서 쓴다."]
+    else:
+        lines += ["", "# 이 덱의 판 — **액자**",
+                  "그림이 3:2 액자에 통째로 앉고 잘리는 부분이 없다.",
+                  "- `구도` 칸에 상단 제목 자리를 넓게 비운다고 적어라.",
+                  "- `제목` 은 그림 맨 위에 굵게 인쇄된다."]
+    lines += ["", "# 그림을 그릴 장"]
     for s in batch:
         rows = "\n".join(f"  - {b['html']}" for b in s["blocks"] if b.get("html"))
         lines += [
@@ -311,6 +423,10 @@ def build_brief(project: Dict[str, Any], batch: List[Dict[str, Any]]) -> str:
 def run(job, pid: int, slug: str, project: Dict[str, Any], *, force: bool = False):
     stage = STAGES["s3a-imgprompt"]
     cfg = config.load()
+    # ★ 판번호는 **이 덱의 갈래**가 정한다. 액자 판(옛 프로젝트)은 6 그대로라
+    #   원장이 낡은 것으로 안 잡힌다 — 지난 영상을 보수해도 지시문이 안 흔들린다.
+    full = is_full(project)
+    fmt = fmt_of(project)
 
     outline = cached_data(pid, slug, "s2b-outline") or {}
     slides = outline.get("slides") or []
@@ -339,7 +455,7 @@ def run(job, pid: int, slug: str, project: Dict[str, Any], *, force: bool = Fals
     # ★ 프롬프트 꼴이 바뀌었으면 몸통이 그대로여도 다시 만든다. 안 그러면 원장이
     #   「바뀐 것 없음」 이라 말하고 옛 꼴 프롬프트가 그대로 나간다.
     old_fmt = [d for d in keep_ids
-               if int(((book.get("by_id") or {}).get(d) or {}).get("fmt") or 1) != PROMPT_FMT]
+               if int(((book.get("by_id") or {}).get(d) or {}).get("fmt") or 1) != fmt]
     if old_fmt:
         keep_ids = [d for d in keep_ids if d not in set(old_fmt)]
         make_ids = make_ids + old_fmt
@@ -405,7 +521,7 @@ def run(job, pid: int, slug: str, project: Dict[str, Any], *, force: bool = Fals
                     # ★ 표본 JSON 은 전부 `photo` 다. 갈릴 축이 없어 고정한다 —
                     #   스튜디오도 이 칸을 안 읽는다.
                     "type": "photo",
-                    "fmt": PROMPT_FMT,
+                    "fmt": fmt,
                     # 유튜브 챕터·썸네일이 이 값을 읽는다(render/youtube.py)
                     "label_heads": [_one(x["head"], 20) for x in labels],
                     # ★ 라벨마다 **몇 번째 문장에서 말하는가**. 모션이 이걸 읽어
@@ -417,7 +533,7 @@ def run(job, pid: int, slug: str, project: Dict[str, Any], *, force: bool = Fals
                                       layout=r.get("layout"), tone=r.get("tone"),
                                       title=_one(r.get("title"), 40) or plain_title(src),
                                       labels=labels, arrange=r.get("arrange") or "",
-                                      cfg=cfg),
+                                      cfg=cfg, full=full),
                     "keywords": [str(k) for k in (r.get("keywords") or [])][:1],
                 }
         job.progress(len(batches), len(batches), "정리")
@@ -437,7 +553,7 @@ def run(job, pid: int, slug: str, project: Dict[str, Any], *, force: bool = Fals
     return write_cache(pid, slug, "s3a-imgprompt",
                        input_hash=stage.input_hash(pid, slug, project),
                        data={"made": len(made), "kept": len(keep_ids),
-                             "fmt": PROMPT_FMT,
+                             "fmt": fmt,
                              "asked": len(ask_ids), "missing": miss,
                              "ledger": len(book["by_id"])},
                        code_version=stage.code_version, cost_usd=cost,

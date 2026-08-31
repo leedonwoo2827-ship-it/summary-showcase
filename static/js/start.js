@@ -263,22 +263,34 @@ export async function mount(root) {
     const s = section("2", "어떤 원고인가요", "고르면 장을 나눕니다. 나중에 바꿔도 됩니다");
     const box = el("div", "kind-pick");
 
-    const pick = (title, desc, swap, primary) => {
+    const pick = (title, desc, swap, fit, primary) => {
       const b = el("button", "btn kind-card" + (primary ? " primary" : ""));
       b.type = "button";
       b.append(el("strong", null, title), el("span", null, desc));
       b.onclick = () => {
         box.querySelectorAll("button").forEach((x) => (x.disabled = true));
-        captureFlow(swap);
+        captureFlow(swap, fit);
       };
       return b;
     };
 
+    /* ★ 이미지 원고가 **두 갈래**다(2026-08-29). 그림이 만들어질 때의 갈래에
+     *   맞춰 그림 안 여백이 잡히므로, 지난 프로젝트를 다시 열어 구울 때 화면이
+     *   달라지면 안 된다("지난 영상 보수때문에"). 그래서 옛 갈래를 고치지 않고
+     *   새 갈래를 하나 더 두었다.
+     *     전면  그림이 화면 가로를 꽉 채운다. 제목은 위 62px 띠에 따로 뜬다
+     *     액자  3:2 액자에 앉고 오른쪽이 비어 있다 — 지난 영상과 같은 화면
+     *   ★ 값은 **여기서 한 번** 정해진다. 나중에 바꾸면 이미 그린 그림의 여백이
+     *     안 맞는다(그림 위 5% 를 비워 둔 것이 액자에서는 헛돈다). */
     box.append(
+      pick("이미지 원고 · 전면",
+           "장마다 그림 한 판이 글을 대신하고, 그림이 화면을 꽉 채웁니다. " +
+           "제목은 맨 위에 따로 뜹니다.", true, "full", true),
+      pick("이미지 원고 · 액자",
+           "그림이 액자 안에 앉고 오른쪽이 비는 예전 화면입니다. " +
+           "지난 영상을 보수할 때 쓰세요.", true, "frame", false),
       pick("html 원고", "글이 줄마다 차례로 뜹니다. 글자가 선명하고 표도 그대로입니다.",
-           false, true),
-      pick("이미지 원고", "장마다 그림 한 판이 글을 대신합니다. 그림은 뒤에 만들어 넣습니다.",
-           true, false));
+           false, "", false));
     s.appendChild(box);
 
     const tip = el("p", "kind-tip");
@@ -287,7 +299,7 @@ export async function mount(root) {
     body.appendChild(s);
   }
 
-  async function captureFlow(swap) {
+  async function captureFlow(swap, fit) {
     body.textContent = "";
     const s = section("2", "씬 만드는 중", "참고자료를 장별로 캡처해 씬을 확정합니다");
     const log = el("div", "srun");
@@ -308,8 +320,9 @@ export async function mount(root) {
       // ★ 장을 나누기 **전에** 종류를 박는다. 조립(s8)이 이 값을 읽어 장마다
       //   `image_swap` 을 세우고, 현황판이 그것으로 «그림으로 갈 원고» 칸을 만든다.
       if (swap) {
+        // `image_fit` 은 서버가 "frame"·"full" 만 받는다. 빈 값이면 안 건드린다.
         await api(`/api/projects/${pid}/image-swap`, {
-          method: "POST", body: {image_swap: true},
+          method: "POST", body: {image_swap: true, image_fit: fit || "frame"},
         });
       }
       const ok = await runSteps(["s2c-capture"], {

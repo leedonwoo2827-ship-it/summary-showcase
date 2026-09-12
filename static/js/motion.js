@@ -219,6 +219,17 @@ export async function mount(root, ctx) {
     bakeBar.append(bPrev, bFull, vals);
     s3.appendChild(bakeBar);
 
+    /* ★ **굽는 동안 초가 올라가는 자리.** `runJob` 이 이미 버튼 글자에 시계를
+     * 찍지만(`static/js/runner.js`), 화면이 다시 그려지면 그 버튼 노드가 떨어져
+     * 나가 **초가 멈춘 것처럼 보인다**(2026-09-05 지시: "8시 29분에 시작했는데
+     * 현재 41분이고 저렇게 멈춰보임"). 전체 굽기는 30~40분이라 그 사이 화면이
+     * 한 번이라도 다시 그려지면 사람은 죽은 줄 안다.
+     * 그래서 **칸에 붙은 줄**을 따로 둔다 — 버튼과 달리 여기는 안 사라진다.
+     * ★ 끝나는 시각도 같이 적는다. 남은 시간을 사람이 암산하지 않게. */
+    const timer = el("div", "onote mo-timer");
+    timer.hidden = true;
+    s3.appendChild(timer);
+
     const q = () => (vals.value.trim()
       ? `&vals=${encodeURIComponent(vals.value.trim())}` : "");
     bPrev.onclick = () => bake(
@@ -293,6 +304,21 @@ export async function mount(root, ctx) {
       const pre = el("pre", "mo-log");
       logbox.appendChild(pre);
       const lines = [];
+      /* 얼마나 걸릴지 — 원본 길이의 1.5~1.8배(파일 머리말). 시안은 95초짜리다.
+         모르면 안 적는다: 틀린 예상은 없는 것만 못하다. */
+      const srcSec = o.name === "시안" ? 95 : Number((s.mp4 || {}).sec) || 0;
+      const est = srcSec ? `${Math.round(srcSec * 1.5 / 60)}~${Math.round(srcSec * 1.8 / 60)}분` : "";
+      const t0 = Date.now();
+      timer.hidden = false;
+      const tick = () => {
+        const sec = Math.floor((Date.now() - t0) / 1000);
+        const mm = `${Math.floor(sec / 60)}분 ${String(sec % 60).padStart(2, "0")}초`;
+        timer.textContent = `${o.name} 굽는 중 — ${mm} 지났습니다`
+          + (est ? ` · 보통 ${est} 걸립니다` : "")
+          + ` · 시작 ${new Date(t0).toTimeString().slice(0, 5)}`;
+      };
+      tick();
+      const iv = setInterval(tick, 1000);
       const ok = await runJob(url, {
         btn: o.btn, label: o.label, group: o.group, name: o.name,
         onLog: (ls) => {
@@ -302,8 +328,10 @@ export async function mount(root, ctx) {
           note.textContent = (lines[lines.length - 1] || "").slice(0, 90);
         },
       });
+      clearInterval(iv);
       note.textContent = "";
-      if (!ok) return;
+      if (!ok) { timer.textContent = `${o.name} 굽기가 멈췄습니다`; return; }
+      timer.hidden = true;
       toast(`${o.name} 이(가) 끝났습니다`);
       await draw();
     }

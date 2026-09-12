@@ -2163,6 +2163,15 @@ label.check input { width: auto; }
 .mo-ok { background: var(--ok-wash); color: var(--ok); }
 .mo-warn { background: var(--warn-wash); color: var(--warn); }
 .mo-vals { flex: 1 1 260px; min-width: 200px; }
+
+/* 굽는 동안 초가 올라가는 줄 — 버튼 글자와 달리 화면이 다시 그려져도 안 사라진다.
+   전체 굽기는 30~40분이라 "살아 있다" 는 표시가 눈에 띄어야 한다(2026-09-05). */
+.mo-timer {
+  margin: 10px 0 0; padding: 8px 12px; border-radius: var(--r-sm);
+  background: var(--brand-wash); color: var(--brand);
+  font-size: var(--t-xs); font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
 /* 굽는 동안 흐르는 로그 — 꼬리 몇 줄만. 다 쌓으면 화면이 로그로 덮인다. */
 .mo-log { margin: 0; padding: 9px 11px; border-radius: 8px; background: var(--paper);
   font-size: 11.5px; line-height: 1.65; color: var(--text-2);

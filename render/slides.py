@@ -658,12 +658,15 @@ p{margin:0 0 11px;font-size:clamp(14px,1.15vw,17px);color:#4a453f;max-width:62ch
   width:min(100%,calc(100vh * 16 / 9));height:min(100%,calc(100vw * 9 / 16));
   padding:0;margin:0;max-width:none;display:block;place-items:stretch;
   overflow:hidden;container-type:size}
-.s.s-pic.s-picfull>.wrap>h2{display:flex;position:absolute;left:0;right:0;top:0;
-  z-index:2;align-items:center;margin:0;line-height:1.25;color:#5A5142;
-  min-height:62px;min-height:5.74cqh;
-  padding:0 34px;padding:0 1.77cqw;
-  font-size:clamp(18px,1.56vw,30px);font-size:2.78cqh}
-.s.s-pic.s-picfull>.wrap>h2::after{display:none}
+/* ★ **표지·마무리에는 글자를 안 얹는다**(2026-09-05 지시: "썸네일은 그림 내리는
+     것 없이 출력하고 16:9 이미지가 그대로 출력되는 것으로 합시다. 즉 위에 텍스트
+     이런거 안나와도 됩니다").
+     한때 제목을 그림 위 띠에 얹어 봤는데, 표지는 **그림 한 장이 그 자체로 말을
+     하는 자리**라 글자가 없는 편이 낫다는 결론이었다. `.s-pic` 이 이미
+     `h2{display:none}` 이라 여기서 되살리지만 않으면 된다.
+   ★ 그림도 안 내린다 — 위 `.m-pic{inset:0}` 그대로 화면을 통째로 덮는다.
+     `.s-picfull` 이 하는 일은 이제 **판을 16:9 로 못박는 것 하나**다(아래 wrap).
+     지시문도 위를 비울 이유가 없어졌다(`render/thumbnail.py`). */
 .s.s-pic.s-picfull{background:#F6F1E8}
 
 /* 줄 등장 — `display` 가 아니라 `opacity` 다. display 로 감추면 줄이 뜰 때마다

@@ -179,7 +179,11 @@ function rulesCol() {
   find.oninput = () => draw(find.value.trim().toLowerCase());
   draw("");
 
-  /* 새 줄 — 덱에 없는 말도 미리 넣어 둘 수 있어야 한다 */
+  /* 새 줄 — 덱에 없는 말도 미리 넣어 둘 수 있어야 한다.
+     ★ **목록 위에 둔다**(2026-09-06 지적: "발음사전 제일 위에 나오게 해줘.
+       스크롤 더 해서 해야 하는데 사소하게 불편해서"). 사전이 길어질수록 아래에
+       두면 넣을 때마다 끝까지 내려야 한다 — 넣는 일은 목록을 다 본 뒤에 하는
+       일이 아니라 아무 때나 하는 일이다. */
   const add = el("div", "dictadd");
   const nk = el("input", "di");
   nk.type = "text";
@@ -201,7 +205,7 @@ function rulesCol() {
     toast(`${k} → ${v} — «사전 저장» 을 눌러야 파일에 들어갑니다`);
   };
   add.append(nk, nv, ab);
-  box.appendChild(add);
+  box.insertBefore(add, find);      // 제목 바로 아래 — 찾기·목록보다 먼저
   return box;
 }
 

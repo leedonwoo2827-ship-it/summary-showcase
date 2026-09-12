@@ -855,7 +855,7 @@ export async function mount(root, ctx) {
         s.image = r.file;
         paint();
         toast(`${r.name} 넣었습니다`);
-        fr.src = `/preview/${state.projectId}?n=${s.no}#${s.no}&t=${Date.now()}`;
+        fr.src = `/preview/${state.projectId}?n=${s.no}&t=${Date.now()}#${s.no}`;
       } catch (e) {
         toast("넣지 못했습니다: " + e.message, "err");
       } finally {
@@ -890,7 +890,7 @@ export async function mount(root, ctx) {
           s.image = "";
           paint();
           bar.replaceWith(el("div", "imgdrop-bar"));
-          fr.src = `/preview/${state.projectId}?n=${s.no}#${s.no}&t=${Date.now()}`;
+          fr.src = `/preview/${state.projectId}?n=${s.no}&t=${Date.now()}#${s.no}`;
         } catch (e) { toast("빼지 못했습니다: " + e.message, "err"); }
       };
       bar.appendChild(rm);
@@ -936,7 +936,12 @@ export async function mount(root, ctx) {
     const stage = el("div", "focus-stage");
     stage.dataset.no = `${s.no} / ${slides.length}`;
     const fr = el("iframe", "focus-frame");
-    fr.src = `/preview/${state.projectId}?n=${s.no}#${s.no}`;
+    /* ★ `&t=` 를 붙인다(2026-09-05). 이 자리만 빠져 있어서 **덱 화면이 옛 화면을
+       그대로 물고 있었다** — 원고 HTML 화면(`html.js`)에는 새 그림이 뜨는데 덱에서는
+       옛 그림이 떠서 "그림이 안 바뀐다" 로 보였다. 그림을 갈아 끼우면 주소가
+       같은 채로 내용만 달라지므로, 주소를 매번 다르게 해야 다시 받아 온다.
+       같은 파일의 다른 자리(858·893·1038)는 이미 그렇게 하고 있다. */
+    fr.src = `/preview/${state.projectId}?n=${s.no}&t=${Date.now()}#${s.no}`;
     fr.loading = "lazy";
     fr.title = `슬라이드 ${s.no}`;
     stage.appendChild(fr);
@@ -1035,7 +1040,7 @@ export async function mount(root, ctx) {
     /* 고친 글이 실제 면에 어떻게 앉는지 보려면 미리보기를 다시 읽어야 한다.
      * 타이핑마다 새로 읽으면 깜빡이므로 **손을 멈춘 뒤** 한 번만. */
     const bump = debounce(() => {
-      fr.src = `/preview/${state.projectId}?n=${s.no}#${s.no}&t=${Date.now()}`;
+      fr.src = `/preview/${state.projectId}?n=${s.no}&t=${Date.now()}#${s.no}`;
     }, 1200);
 
     // 편집 — 음성 / 자막 / 발음 / 미디어

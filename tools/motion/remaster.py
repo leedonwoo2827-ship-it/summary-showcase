@@ -335,18 +335,19 @@ def parse_span(z: dict) -> tuple[float | None, float | None]:
 # ── 4b) 사람이 지정한 마스크(zones.json) ────────────────────────────────
 def zone_build(cur: np.ndarray, zboxes: list[dict], *, W: int, H: int,
                edge_gain: float = 1.0, log=None):
-    """지정기에서 그린 상자로 (plate, rises, art, mask, mbox, report) 를 만든다.
+    """지정기에서 그린 상자로 (plate, rises, art, mask, mbox, report, items, covers) 를 만든다.
 
     ★ 자동 검출과 달리 **자리는 사람이 정해 준다.** 이 함수가 하는 일은
       (1) 상자 안에서 글자 획 모양(알파)을 뽑고
       (2) 띄울 상자는 그 자리를 배경색으로 메워 「없는 판」을 만들고
-      (3) 빛이 지나갈 마스크를 모으는 것뿐이다.
+      (3) 빛이 지나갈 마스크를 모으고
+      (4) 「가리기」 상자는 배경색으로 메운 채 `covers` 에만 담아 — 다시 안 뜬다.
 
     ★ 알파는 **밝기 차**로 잰다 — 어두운 글자(밝은 바탕)와 밝은 글자(어두운 바탕)가
       섞여 있기 때문이다. 어두운 쪽만 보면 흰 글자를 통째로 놓친다.
     """
     plate = cur.copy()
-    rises, art, report, items = [], [], [], []
+    rises, art, report, items, covers = [], [], [], [], []
     mask = np.zeros((H, W), np.float32)
     used = []
     for bi, z in enumerate(sorted(zboxes, key=lambda b: (b["y"], b["x"]))):
@@ -356,6 +357,18 @@ def zone_build(cur: np.ndarray, zboxes: list[dict], *, W: int, H: int,
             continue
         kind = z.get("kind", "text")
         reg = cur[y0:y1, x0:x1].astype(np.float32)
+        # ★ 「가리기」— 예전에 글자가 깨져 나오던 자리를 계속 지운 채로 둔다.
+        #   text/art 처럼 나중에 슝 올리거나 훑어 드러내지 않는다 — `rises`/`art`/
+        #   `items` 어디에도 넣지 않으면 다시 떠오를 자리가 없다. 테두리 링 색으로
+        #   메운다(art 와 같은 방법) — 안이 뭐였는지 몰라도 어색하지 않게 지워진다.
+        if kind == "cover":
+            ring = np.concatenate([reg[:, :6].reshape(-1, 3), reg[:, -6:].reshape(-1, 3),
+                                   reg[:6].reshape(-1, 3), reg[-6:].reshape(-1, 3)])
+            plate[y0:y1, x0:x1] = np.median(ring, axis=0)
+            covers.append((x0, y0, x1, y1))
+            used.append((x0, y0, x1, y1))
+            report.append(f"{bi + 1}:가리기")
+            continue
         luma = reg[:, :, 0] * 0.299 + reg[:, :, 1] * 0.587 + reg[:, :, 2] * 0.114
         # ★ 바탕색은 **줄별 중앙값이 아니라 최빈값**으로 잰다. 굵은 제목을 딱 맞게
         #   싸면 한 줄의 절반 넘게 글자라서 중앙값이 글자색에 얹힌다 — 그러면
@@ -430,10 +443,10 @@ def zone_build(cur: np.ndarray, zboxes: list[dict], *, W: int, H: int,
         items.append({"kind": kind, "box": (x0, y0, x1, y1), "alpha": full,
                       "at": at, "until": until, "label": f"{bi + 1}"})
     if not used:
-        return None, [], [], None, None, report, []
+        return None, [], [], None, None, report, [], []
     mbox = (max(0, min(b[0] for b in used) - 8), max(0, min(b[1] for b in used) - 8),
             min(W, max(b[2] for b in used) + 8), min(H, max(b[3] for b in used) + 8))
-    return plate, rises, art, mask, mbox, report, items
+    return plate, rises, art, mask, mbox, report, items, covers
 
 
 # ── 5) 한 프레임 그리기 ─────────────────────────────────────────────────
@@ -888,13 +901,26 @@ def main() -> None:
             zmask = None; zbox = None
             if ZON is not None and ZON.get(i):
                 # ★ 사람이 지정한 마스크가 있으면 자동 검출을 쓰지 않는다.
-                zp, zrise, zart, zmask, zbox, zrep, zitems = zone_build(
+                zp, zrise, zart, zmask, zbox, zrep, zitems, zcovers = zone_build(
                     cur, ZON[i], W=W, H=H, edge_gain=a.art_edge)
                 if zp is not None:
+                    # ★ 「가리기」는 **`text`/`art` 와 다르다** — 나중에 원본(`cur`)으로
+                    #   되돌아가는 자리가 두 곳 있다: 등장이 끝난 뒤 흔들림 없게 넣는
+                    #   "마지막 한 장은 원본 그대로"(`bake_zoned` 안, 아래 991행 부근)와
+                    #   정지 구간의 밑그림 파일(`still_src`, 디스크의 스크린샷 그대로).
+                    #   `cur` 를 그대로 두면 그 두 자리에서 지운 글자가 도로 나타난다
+                    #   — 그래서 가린 자리만 `zp`(이미 메운 판) 값으로 바꿔치기한
+                    #   `cur_final` 을 만들어 **`cur` 대신** 넘긴다.
+                    cur_final = cur
+                    if zcovers:
+                        cur_final = cur.copy()
+                        for (cx0, cy0, cx1, cy1) in zcovers:
+                            cur_final[cy0:cy1, cx0:cx1] = zp[cy0:cy1, cx0:cx1]
+                        Image.fromarray(cur_final).save(shots[i])
                     # ★ 시간표대로 굽는 길 — 빈 배경에서 시작해 걷어내며 끝난다.
                     F1 = int(round(nxt * fps))
                     ss, made = bake_zoned(
-                        cur=cur, plate=zp, items=zitems, card=card,
+                        cur=cur_final, plate=zp, items=zitems, card=card,
                         F0=emitted, F1=F1, fps=fps, a=a, seg_dir=seg_dir,
                         tag=f"{i:05d}", still_src=shots[i], W=W, H=H)
                     segs += ss

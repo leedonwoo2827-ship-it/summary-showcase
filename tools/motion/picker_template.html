@@ -4,7 +4,7 @@
 <title>모션 마스크 지정기 — 19-img</title>
 <style>
 :root{--bg:#12151b;--pane:#1a1e26;--line:#2c323d;--ink:#e8ecf2;--dim:#96a0b0;
-      --text:#4da3ff;--art:#ffb03a;--sheen:#38d39f;--acc:#ff6b6b}
+      --text:#4da3ff;--art:#ffb03a;--sheen:#38d39f;--acc:#ff6b6b;--cover:#ff5c8a}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);
      font:14px/1.5 "Malgun Gothic","Apple SD Gothic Neo",system-ui,sans-serif}
@@ -46,6 +46,7 @@ main{flex:1;display:flex;flex-direction:column;min-width:0;padding:10px 14px;ove
 .chip.t.on{background:var(--text);border-color:var(--text)}
 .chip.a.on{background:var(--art);border-color:var(--art)}
 .chip.s.on{background:var(--sheen);border-color:var(--sheen)}
+.chip.c.on{background:var(--cover);border-color:var(--cover)}
 .co{color:var(--dim);font-size:11px;margin-top:3px;font-variant-numeric:tabular-nums}
 .tm{width:104px;background:#0e1116;color:#ffd479;border:1px solid var(--line);border-radius:6px;
     padding:3px 7px;font:12px/1.4 ui-monospace,Consolas,monospace;text-align:center}
@@ -93,7 +94,8 @@ textarea{width:100%;height:110px;background:#0e1116;color:#9fd0ff;border:1px sol
       <s><i class="sw" style="background:#4da3ff"></i><b>글자</b> — 획 모양대로 아래서 슝 &nbsp;<u>제목·부제</u></s>
       <s><i class="sw" style="background:#ffb03a"></i><b>그림</b> — 칸 전체가 좌→오 훑기 &nbsp;<u>그래프·표·도표</u></s>
       <s><i class="sw" style="background:#38d39f"></i><b>빛만</b> — 등장 없음</s>
-      <s style="color:#6f7a89">빛은 셋 다 똑같이 들어갑니다</s>
+      <s><i class="sw" style="background:#ff5c8a"></i><b>가리기</b> — 계속 안 보이게 지움</s>
+      <s style="color:#6f7a89">빛은 가리기를 뺀 셋에 똑같이 들어갑니다</s>
     </div>
     <div class="stage" id="stage"><img id="im"><canvas id="cv"></canvas></div>
   </main>
@@ -103,13 +105,16 @@ textarea{width:100%;height:110px;background:#0e1116;color:#9fd0ff;border:1px sol
       <b>쓰는 법</b><br>
       • 화면을 끌어 상자를 그립니다(여러 개 가능)<br>
       • 상자 안을 끌면 이동, 모서리 8곳을 끌면 크기 조절<br>
-      • 오른쪽에서 <b>글자 / 그림 / 빛만</b> 을 고릅니다<br><br>
-      <b>셋의 차이 — 등장 방식만 다릅니다. 빛은 셋 다 들어갑니다</b><br>
+      • 오른쪽에서 <b>글자 / 그림 / 빛만 / 가리기</b> 를 고릅니다<br><br>
+      <b>넷의 차이 — 등장 방식만 다릅니다. 빛은 가리기를 뺀 셋에 들어갑니다</b><br>
       • <b style="color:#4da3ff">글자</b> — <b>획 모양대로</b> 아래에서 슝 올라옵니다. 제목·부제처럼
         평평한 바탕 위에 얹힌 글자에 쓰세요<br>
       • <b style="color:#ffb03a">그림</b> — <b>칸 전체가 좌→오</b>로 훑리며 드러납니다. 곡선·축·눈금이
         섞인 그래프·표·2축 도표는 이걸로. 획 단위로 띄우면 곡선이 미끄러져 보입니다<br>
-      • <b style="color:#38d39f">빛만</b> — 등장 없이 처음부터 있고, 어두운 획 위로 빛만 오갑니다<br><br>
+      • <b style="color:#38d39f">빛만</b> — 등장 없이 처음부터 있고, 어두운 획 위로 빛만 오갑니다<br>
+      • <b style="color:#ff5c8a">가리기</b> — 등장 없이 <b>영상 내내 지운 채로 둡니다</b>. 원본에
+        잘못 나온 글자·깨진 자리를 덮어 안 보이게 할 때 쓰세요. 상자 테두리 색으로
+        메워 지우고, 다시 떠오르지 않습니다<br><br>
       <b>안 그려도 됩니다</b> — 상자를 안 그린 자리는 액자가 훑고 들어올 때
       <b>한 번에 같이</b> 나옵니다. 상자는 "한 박자 늦게 뜨게 하고 싶은 것"만 그리시면 됩니다.<br><br>
       • <kbd>←</kbd><kbd>→</kbd> 씬 이동 · <kbd>Del</kbd> 선택 상자 삭제 · <kbd>Ctrl+Z</kbd> 되돌리기<br>
@@ -137,8 +142,8 @@ textarea{width:100%;height:110px;background:#0e1116;color:#9fd0ff;border:1px sol
 const D=__DATA__, IMGS=__IMGS__;
 const S=D.scenes; let cur=0, sel=-1, undo=[];
 const im=document.getElementById('im'), cv=document.getElementById('cv'), ctx=cv.getContext('2d');
-const COL={text:'#4da3ff',art:'#ffb03a',sheen:'#38d39f'};
-const NM={text:'글자',art:'그림',sheen:'빛만'};
+const COL={text:'#4da3ff',art:'#ffb03a',sheen:'#38d39f',cover:'#ff5c8a'};
+const NM={text:'글자',art:'그림',sheen:'빛만',cover:'가리기'};
 function snap(){undo.push(JSON.stringify(S.map(s=>s.boxes)));if(undo.length>60)undo.shift();}
 function toast(t){const e=document.getElementById('toast');e.textContent=t;e.classList.add('on');
   setTimeout(()=>e.classList.remove('on'),1300);}
@@ -169,6 +174,7 @@ function list(){const L=document.getElementById('list');L.innerHTML='';
       <span class="chip t ${b.kind=='text'?'on':''}" data-k="text">글자</span>
       <span class="chip a ${b.kind=='art'?'on':''}" data-k="art">그림</span>
       <span class="chip s ${b.kind=='sheen'?'on':''}" data-k="sheen">빛만</span>
+      <span class="chip c ${b.kind=='cover'?'on':''}" data-k="cover">가리기</span>
       <span class="x">✕</span></div>
       <div class="row" style="margin-top:4px">
         <span class="tlab">등장~빛끝</span>
@@ -217,7 +223,7 @@ function loadZones(txt){
     zs.forEach(o=>{const d=Math.abs((o.cut==null?-999:o.cut)-s.cut); if(d<bd){bd=d;best=o;}});
     if(best&&bd<=1.5){
       s.boxes=(best.boxes||[]).map(b=>({x:+b.x||0,y:+b.y||0,w:+b.w||0,h:+b.h||0,
-        kind:(b.kind==='art'||b.kind==='sheen')?b.kind:'text', t:b.t||''}));
+        kind:['art','sheen','cover'].includes(b.kind)?b.kind:'text', t:b.t||''}));
       hit++;
     } else miss++;
   });

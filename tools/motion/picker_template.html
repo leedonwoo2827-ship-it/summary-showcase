@@ -172,7 +172,6 @@ function list(){const L=document.getElementById('list');L.innerHTML='';
     const sp=span(b.t), L2=len(cur);
     d.innerHTML=`<div class="row"><span class="nm">${i+1}. ${NM[b.kind]}</span>
       <span class="chip t ${b.kind=='text'?'on':''}" data-k="text">글자</span>
-      <span class="chip a ${b.kind=='art'?'on':''}" data-k="art">그림</span>
       <span class="chip s ${b.kind=='sheen'?'on':''}" data-k="sheen">빛만</span>
       <span class="chip c ${b.kind=='cover'?'on':''}" data-k="cover">가리기</span>
       <span class="x">✕</span></div>

@@ -210,6 +210,19 @@ def zones_path(mp4: Path) -> Path:
     return mp4.with_name(mp4.stem + "-zones.json")
 
 
+def gen_path(mp4: Path) -> Path:
+    """기계가 찾아 둔 상자 — 사람이 손댄 `zones.json` 과 **파일을 가른다.**
+
+    같은 파일에 쓰면 다시 돌릴 때마다 사람이 고친 것을 덮는다. 지정기가 이것을
+    밑그림으로 깔고, 사람이 고쳐 내려받은 것이 `zones.json` 이 된다.
+    """
+    return mp4.with_name(mp4.stem + "-zones.gen.json")
+
+
+def report_path(mp4: Path) -> Path:
+    return mp4.with_name(mp4.stem + "-라벨검수.md")
+
+
 # ── 상태 ───────────────────────────────────────────────────────────────────
 def _count(zpath: Path) -> Dict[str, int]:
     try:
@@ -230,7 +243,8 @@ def state(pid: int, slug: str) -> Dict[str, Any]:
         "python": (t or {}).get("python") or "",
         "deps": bool(t) and has_deps(t["python"]),
         "ffprobe": bool(_ffprobe()),
-        "mp4": None, "picker": None, "zones": None, "bakes": [],
+        "mp4": None, "picker": None, "zones": None, "gen": None,
+        "report": "", "bakes": [],
         "slides": 0, "expect_scenes": 0, "note": "",
     }
     if mp4 is None:
@@ -255,6 +269,14 @@ def state(pid: int, slug: str) -> Dict[str, Any]:
     zp = zones_path(mp4)
     if zp.is_file():
         out["zones"] = {"name": zp.name, "path": str(zp), **_count(zp)}
+
+    # 기계가 찾아 둔 상자 — 사람이 고친 `zones.json` 과 **파일이 다르다**
+    gp = gen_path(mp4)
+    if gp.is_file():
+        out["gen"] = {"name": gp.name, "path": str(gp), **_count(gp)}
+    rp = report_path(mp4)
+    if rp.is_file():
+        out["report"] = rp.name
 
     # 구워 둔 것들 — 시안이든 완성이든 같은 자리에 쌓인다
     for f in sorted(mp4.parent.glob(f"{mp4.stem}-*.mp4")):
@@ -433,14 +455,20 @@ def save_scene(pid: int, slug: str, no: int, boxes: List[Dict[str, Any]],
         y = max(0, min(H - 8, int(b.get("y", 0))))
         w = max(8, min(W - x, int(b.get("w", 0))))
         h = max(8, min(H - y, int(b.get("h", 0))))
+        # ★ kind 는 `text` 만 쓴다 — 그림 위에 걸면 자국이 남는다(확인된 결론).
+        #   **`cover` 하나가 예외다.** 깨져 나온 글자를 영상 내내 덮으라고 거는
+        #   상자인데, 여기서 `text` 로 떨어뜨리면 덮으라고 건 그 글자를 오히려
+        #   다시 띄운다 — 지정기와 `remaster` 는 이미 제대로 다루고 앱만 떨어
+        #   뜨리고 있었다.
+        kind = b.get("kind") if b.get("kind") in ("text", "art", "sheen", "cover") \
+            else "text"
         at, until = b.get("at"), b.get("until")
         t = ""
-        if at is not None:
+        # 가리기는 시각을 갖지 않는다 — 처음부터 끝까지 덮인다(`remaster.zone_build`
+        # 가 `parse_span` 앞에서 건너뛴다). 시각이 실려 오면 버린다.
+        if kind != "cover" and at is not None:
             t = _mmss(at) + "~" + (_mmss(until) if until is not None else "")
-        # ★ kind 는 `text` 만 쓴다 — 그림 위에 걸면 자국이 남는다(확인된 결론).
-        fresh.append({"x": x, "y": y, "w": w, "h": h,
-                      "kind": b.get("kind") if b.get("kind") in ("text", "art", "sheen")
-                              else "text", "t": t})
+        fresh.append({"x": x, "y": y, "w": w, "h": h, "kind": kind, "t": t})
     sc["boxes"] = fresh
     if done is not None:
         sc["done"] = bool(done)
@@ -450,6 +478,39 @@ def save_scene(pid: int, slug: str, no: int, boxes: List[Dict[str, Any]],
     return {"ok": True, "no": no, "boxes": len(fresh),
             "timed": sum(1 for b in fresh if b["t"]),
             "done": bool(sc.get("done"))}
+
+
+def fill_times(boxes: List[Dict[str, Any]], cues: List[Dict[str, Any]],
+               scene_len: float, *, gap: float = 0.40) -> List[Dict[str, Any]]:
+    """`at` 이 정해진 상자들 사이를 메우고 `until`(빛끝)을 채운다.
+
+    들어오는 상자는 `at` 을 이미 들고 있거나 `None` 이다. 여기서 하는 일은 셋.
+      1. 시각 순으로 세운다 — 시각이 없는 것은 뒤로 (위→아래 차례는 지킨다)
+      2. 시각이 없는 것은 앞엣것에서 `gap` 만큼 뒤로 밀어 채운다
+      3. 빛끝은 **다음의 「다른」 시각**까지. 마지막은 장 끝까지
+
+    ★ 3번이 요점이다. 한 라벨의 굵은 머리와 그 아래 설명은 **같이 떠야 해서 같은
+      시각을 나눠 갖는다.** 그냥 「다음 상자의 시각」으로 잡으면 형제의 같은 시각을
+      물어 빛끝이 `at + 1.0` 으로 주저앉는다 — 뜨자마자 꺼진다.
+    ★ `s13b_order` 와 `s13c_zones` 가 **같은 함수를 쓴다.** 두 벌로 두면 반드시
+      어긋난다.
+    """
+    if not boxes:
+        return boxes
+    body = max(1.0, float(scene_len) - 0.60)      # 끝 걷어내기 자리를 비워 둔다
+    tail = min(cues[-1]["until"], body) if cues else body
+
+    boxes.sort(key=lambda b: (b.get("at") is None, b.get("at") or 0,
+                              b.get("y", 0), b.get("x", 0)))
+    for i, b in enumerate(boxes):
+        if b.get("at") is None:
+            prev = boxes[i - 1]["at"] if i else 0.0
+            b["at"] = round(min(body - 0.5, prev + gap), 1)
+        b["at"] = round(min(float(b["at"]), body - 0.5), 1)
+    for i, b in enumerate(boxes):
+        nxt = next((o["at"] for o in boxes[i + 1:] if o["at"] > b["at"] + 0.05), tail)
+        b["until"] = round(max(b["at"] + 1.0, nxt), 1)
+    return boxes
 
 
 def autotime(pid: int, slug: str, no: int) -> List[Dict[str, Any]]:
@@ -532,8 +593,14 @@ def run_picker(job, pid: int, slug: str, doc: Dict[str, Any], *,
     else:
         job.progress(0, 1, "지정기 만드는 중")
         job.add_log(f"재료: {mp4}")
-        rc = _stream(job, [t["python"], t["picker"], str(mp4)],
-                     cwd=t["dir"], timeout=1800)
+        args = [t["python"], t["picker"], str(mp4)]
+        # ★ 「상자 자리 찾기」(S13c)가 먼저 돌았으면 **그 상자를 밑그림으로 깐다.**
+        #   없으면 예전처럼 픽셀만 보고 찾는다 — 원장이 없는 옛 프로젝트의 자리다.
+        gen = gen_path(mp4)
+        if gen.is_file():
+            args += ["--zones", str(gen)]
+            job.add_log(f"찾아 둔 상자를 밑그림으로 씁니다 — {gen.name}")
+        rc = _stream(job, args, cwd=t["dir"], timeout=1800)
         if rc != 0 or not pk.is_file():
             raise RuntimeError(f"지정기를 만들지 못했습니다 (종료 {rc})")
 

@@ -283,7 +283,10 @@ export async function storyboard(stageHost, rowsHost, cueHost, no) {
     const k = scale();
     layer.textContent = "";
     boxes.forEach((b, i) => {
-      const r = el("div", "sb-box" + (i === sel ? " on" : ""));
+      /* ★ 가리기는 **덮는** 상자다 — 글자 상자와 같은 모양으로 그리면 실수로
+         멀쩡한 자리에 걸어 놓고도 못 알아챈다. 빗금으로 다르게 그린다. */
+      const r = el("div", "sb-box" + (i === sel ? " on" : "")
+                        + (b.kind === "cover" ? " cover" : ""));
       r.style.left = `${b.x * k}px`;
       r.style.top = `${b.y * k}px`;
       r.style.width = `${b.w * k}px`;
@@ -319,18 +322,28 @@ export async function storyboard(stageHost, rowsHost, cueHost, no) {
       u.type = "text"; u.value = fmt(b.until); u.placeholder = "빛끝";
       u.oninput = () => { b.until = u.value.trim() === "" ? null : parseFloat(u.value); };
 
-      /* ★ 종류 — 글자 · 그림 · 빛만.
+      /* ★ 종류 — 글자 · 그림 · 빛만 · 가리기.
          화살표·도표처럼 **면이 넓은 그림**에 글자 방식(획 모양대로 지웠다 올리기)을
          걸면 자국이 남는다. 그림은 칸 전체가 좌→오로 훑려 드러나야 한다.
-         바탕이 거친 자리는 `빛만` — 지우면 번지므로 빛만 지나간다. */
+         바탕이 거친 자리는 `빛만` — 지우면 번지므로 빛만 지나간다.
+         `가리기` 는 **깨져 나온 글자를 영상 내내 덮는다.** 등장이 없으니 시각 칸을
+         잠근다 — 시각을 적어도 `remaster` 가 보지 않는다. */
       const kind = el("select", "sb-kind");
-      for (const [v, t] of [["text", "글자"], ["art", "그림"], ["sheen", "빛만"]]) {
+      for (const [v, t] of [["text", "글자"], ["art", "그림"], ["sheen", "빛만"],
+                            ["cover", "가리기"]]) {
         const o = el("option", null, t);
         o.value = v;
         if ((b.kind || "text") === v) o.selected = true;
         kind.appendChild(o);
       }
-      kind.onchange = () => { b.kind = kind.value; };
+      const lockT = () => {
+        const cv = kind.value === "cover";
+        a.disabled = u.disabled = cv;
+        a.title = u.title = cv ? "가리기는 영상 내내 덮습니다 — 시각이 없습니다" : "";
+        r.classList.toggle("sb-cover", cv);
+      };
+      kind.onchange = () => { b.kind = kind.value; lockT(); draw(); };
+      lockT();
 
       /* ★ 시각 옆에 그때의 말이 붙는다 — 이 화면의 존재 이유다 */
       const say = el("span", "sb-say", said(b.at));

@@ -2195,6 +2195,12 @@ label.check input { width: auto; }
 .sb-box { position: absolute; box-sizing: border-box; cursor: move;
   border: 2px solid var(--brand); background: rgba(154, 77, 51, .12); }
 .sb-box.on { border-color: var(--ok); background: rgba(37, 124, 54, .16); }
+/* ★ 가리기 — 깨져 나온 글자를 영상 내내 덮는 상자. 글자 상자와 눈으로 갈린다. */
+.sb-box.cover { border-color: #ff5c8a; border-style: dashed;
+  background: repeating-linear-gradient(45deg, rgba(255, 92, 138, .22) 0 7px,
+              rgba(255, 92, 138, .06) 7px 14px); }
+.sb-box.cover .sb-no, .sb-box.cover .sb-grip { background: #ff5c8a; }
+.sb-rows .sb-cover .sb-t { opacity: .38; }
 .sb-no { position: absolute; left: -1px; top: -1px; min-width: 17px; height: 17px;
   padding: 0 4px; border-radius: 3px 0 3px 0; background: var(--brand);
   color: #fff; font-size: 11px; line-height: 17px; text-align: center;

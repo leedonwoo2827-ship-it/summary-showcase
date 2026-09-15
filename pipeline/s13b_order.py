@@ -120,10 +120,13 @@ def _label_hint(pid: int, slug: str, no: int) -> str:
       훨씬 덜 틀린다.
     ★ 19장처럼 옛 판(PROMPT_FMT 5)으로 만든 프로젝트는 `label_says` 가 없다.
       그때는 이름만 주고 문장 짝짓기는 그림을 보고 하게 둔다.
+    ★ **덱은 `10_덱/deck.json` 에서 읽는다.** 예전에는 `s8-assemble` 의 캐시에서
+      `slides` 를 꺼냈는데 그 캐시에는 `deck_file` 과 `totals` 뿐이라
+      (`s8_assemble.py` 의 `write_cache`), 이 함수가 **늘 빈 문자열을 돌려주고
+      있었다.** 답지를 넘긴 적이 한 번도 없었다는 뜻이다. 조용해서 몰랐다.
     """
     try:
-        from pipeline.registry import cached_data
-        deck = (cached_data(pid, slug, "s8-assemble") or {}).get("slides") or []
+        deck = (ws.read_json(ws.deck_path(pid, slug), {}) or {}).get("slides") or []
         did = next((s.get("data_id") for s in deck if int(s.get("no", 0)) == no), None)
         if not did:
             return ""
@@ -180,14 +183,8 @@ def run_one(pid: int, slug: str, no: int, p: ClaudeProvider) -> Dict[str, Any]:
         b["_text"] = (r.get("text") or "").strip()
         b["at"] = round(min(cues[k - 1]["at"], body - 0.5), 1) if 1 <= k <= len(cues) else None
 
-    # 시각 순으로 세우고, 시각이 없는 것은 뒤로(위→아래는 지킨다)
-    boxes.sort(key=lambda b: (b["at"] is None, b["at"] or 0, b["y"], b["x"]))
-    # 빛끝 — 다음 상자가 뜰 때까지. 마지막은 장 끝까지.
-    for i, b in enumerate(boxes):
-        if b["at"] is None:
-            b["at"] = round(min(body - 0.5, (boxes[i - 1]["at"] if i else 0) + 0.4), 1)
-        nxt = boxes[i + 1]["at"] if i + 1 < len(boxes) else min(cues[-1]["until"], body)
-        b["until"] = round(max(b["at"] + 1.0, nxt), 1)
+    # 세우고 메우고 빛끝 채우기 — `s13c_zones` 와 **같은 함수**를 쓴다
+    motion.fill_times(boxes, cues, float(sc["len"]))
 
     return {"no": no, "boxes": boxes,
             "read": [{"n": i, "text": b.get("_text", ""), "at": b["at"]}

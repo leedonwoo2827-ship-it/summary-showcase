@@ -2093,6 +2093,28 @@ def motion_order(pid: int, no: int = 0) -> Dict[str, Any]:
     return job.to_dict()
 
 
+@app.post("/api/projects/{pid}/motion/zones/auto")
+def motion_zones_auto(pid: int, no: int = 0, apply: bool = False) -> Dict[str, Any]:
+    """원장에 적어 둔 **라벨을 그림에서 찾아** 상자를 놓고, 제대로 나왔는지 본다.
+
+    ★ `zones.json` 을 건드리지 않는다. 찾은 상자는 `<stem>-zones.gen.json` 에 두고
+      「지정기 만들기」가 그것을 밑그림으로 깐다 — 사람이 고친 것을 덮지 않는다.
+    ★ 돈이 드는 단계라(Claude vision) 눌러야 돈다. `no` 를 주면 그 장만.
+    """
+    doc = _find(pid)
+    from pipeline import s13c_zones
+    only = [no] if no else None
+    try:
+        job = get_registry().start(
+            project_id=pid, stage="s13c-zones",
+            label=f"{no}장 상자 찾기" if no else "상자 자리 찾기",
+            work=lambda j: s13c_zones.run(j, pid, doc["slug"], doc,
+                                          only=only, apply=apply))
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    return job.to_dict()
+
+
 @app.post("/api/projects/{pid}/motion/bake")
 def motion_bake(pid: int, mode: str = "시안", vals: str = "") -> Dict[str, Any]:
     doc = _find(pid)

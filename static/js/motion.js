@@ -102,10 +102,39 @@ export async function mount(root, ctx) {
     const logbox = el("div", "rec-out");
     logbox.hidden = true;
 
+    /* ── 0) 상자 자리 찾기 ────────────────────────────────────────────────
+       ★ 이 단계가 **지정기보다 먼저**다. 그림을 만들 때 적어 둔 라벨(원장)을
+         답지로 삼아 화면에서 그 글자를 찾고, 제대로 나왔는지까지 본다.
+         실측: 예전 방식은 그림에 구운 라벨 130개 중 4개를 잡았고(3%), 이 단계는
+         84개를 잡는다(65%). 찾은 상자는 딴 파일에 두므로 `zones.json` 은
+         건드리지 않는다 — 아래 「지정기 만들기」가 그것을 밑그림으로 깐다. */
+    const s0 = step("0", "상자 자리 찾기 (권함)",
+      "그림을 만들 때 적어 둔 라벨을 화면에서 찾아 상자를 미리 놓습니다. "
+      + "깨져 나온 글자도 같이 짚어 줍니다. Claude 를 부르므로 값이 듭니다");
+
+    const bFind = el("button", "btn primary");
+    bFind.type = "button";
+    const lFind = el("span", null, "상자 자리 찾기");
+    bFind.append(icon("target", 14), lFind);
+    bFind.title = "zones.json 은 건드리지 않습니다 — 찾은 상자는 따로 두고, "
+      + "지정기를 만들 때 밑그림으로 깔립니다";
+    const findBar = el("div", "imgdrop-bar");
+    findBar.append(bFind);
+    s0.appendChild(findBar);
+    if (s.gen) {
+      s0.appendChild(el("div", "imgdrop-path",
+        `찾아 둔 상자 ${s.gen.boxes}개 · ${s.gen.scenes}장`
+        + (s.report ? `  ·  검수 보고: ${s.report}` : "")));
+    }
+    bFind.onclick = () => bake(
+      `/api/projects/${state.projectId}/motion/zones/auto`,
+      { btn: bFind, label: lFind, name: "상자 자리 찾기",
+        group: [bPick, bNew, bZone, bPrev, bFull] });
+
     // ── 1) 지정기 ─────────────────────────────────────────────────────────
     const s1 = step("1", "마스크 지정기",
-      "글자가 떠오를 자리를 상자로 찍습니다. 도구가 기본 상자를 얹어 주지만 "
-      + "빠지거나 어긋난 자리가 있습니다 — 열어서 고쳐 주세요");
+      "글자가 떠오를 자리를 상자로 찍습니다. 0번을 먼저 돌렸다면 그 상자가 "
+      + "깔린 채로 열립니다 — 열어서 고쳐 주세요");
 
     const bPick = el("button", "btn primary");
     bPick.type = "button";

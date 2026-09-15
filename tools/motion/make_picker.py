@@ -134,10 +134,27 @@ def looks_text(img: np.ndarray, b: dict) -> bool:
 TPL = Path(__file__).with_name("picker_template.html")
 
 
+def load_zones(p: Path) -> dict:
+    """미리 찾아 둔 상자를 씬 `cut` 시각으로 찾아 쓰게 담는다.
+
+    ★ **번호가 아니라 `cut` 시각으로 짝짓는다.** 지정기·`remaster` 와 같은 규칙이다
+      (±1.5초). 번호로 짝지었다가 채워 둔 시각 186개를 날린 적이 있다.
+    """
+    z = json.loads(p.read_text(encoding="utf-8-sig"))
+    return {round(float(s.get("cut", -999)), 2): (s.get("boxes") or [])
+            for s in (z.get("scenes") or [])}
+
+
 def main():
     if len(sys.argv) < 2:
-        sys.exit("쓰기: python make_picker.py <완성 mp4>")
+        sys.exit("쓰기: python make_picker.py <완성 mp4> [--zones 상자.json]")
     src = Path(sys.argv[1]).expanduser().resolve()
+    # ★ `--zones` 를 주면 **그 상자를 밑그림으로 깐다.** 안 주면 예전처럼
+    #   `propose()` 가 픽셀만 보고 찾는다 — 원장이 없는 옛 프로젝트의 자리다.
+    pre = None
+    if "--zones" in sys.argv:
+        pre = load_zones(Path(sys.argv[sys.argv.index("--zones") + 1]).resolve())
+        print(f"  미리 찾아 둔 상자를 씁니다 — {sum(len(v) for v in pre.values())}개")
     out = src.with_name(src.stem + "-마스크지정기.html")
     print("1/4 장면 전환 찾기")
     meta, cuts, times = scenes(src)
@@ -151,12 +168,20 @@ def main():
             subprocess.run([rm.FFMPEG, "-v", "error", "-ss", f"{t:.2f}", "-i", str(src),
                             "-frames:v", "1", str(p), "-y"], check=True)
         arr = np.asarray(Image.open(p).convert("RGB"))
-        raw = propose(arr)
-        keep = [b for b in raw if looks_text(arr, b)]
-        for b in keep:
-            b["kind"] = "text"          # ★ 상자는 글자에만 건다
-            b["t"] = ""                 # 등장~빛끝 (비면 자동)
-        dropped += len(raw) - len(keep)
+        if pre is not None:
+            c = round(cuts[i], 2)
+            hit = min(pre, key=lambda k: abs(k - c), default=None)
+            keep = [dict(b) for b in (pre.get(hit) or [])]                 if hit is not None and abs(hit - c) <= 1.5 else []
+            for b in keep:
+                b.setdefault("kind", "text")
+                b.setdefault("t", "")
+        else:
+            raw = propose(arr)
+            keep = [b for b in raw if looks_text(arr, b)]
+            for b in keep:
+                b["kind"] = "text"      # ★ 상자는 글자에만 건다
+                b["t"] = ""             # 등장~빛끝 (비면 자동)
+            dropped += len(raw) - len(keep)
         boxes.append(keep)
         j = tmp / f"s{i:02d}.jpg"
         Image.fromarray(arr).resize((1120, 630), Image.LANCZOS).save(j, quality=68, optimize=True)
